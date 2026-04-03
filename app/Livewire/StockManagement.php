@@ -121,13 +121,16 @@ class StockManagement extends Component
     {
         // Check if store module is enabled
         $this->ensureModuleEnabled('store');
-        $this->canAuthorizeStockRequests = Auth::user() && Auth::user()->hasPermission('stock_authorize_requests');
+        $this->canAuthorizeStockRequests = Auth::user() && (
+            Auth::user()->hasPermission('stock_authorize_requests')
+            || Auth::user()->isEffectiveStoreKeeper()
+        );
         $this->canEditStockItems = Auth::user() && Auth::user()->canManageStockItems();
 
         // Check if stock locations exist
         $locationsCount = StockLocation::where('is_active', true)->count();
         if ($locationsCount === 0) {
-            session()->flash('error', 'No stock locations found. Please create at least one main stock location first. Only Manager and Super Admin can create stock locations.');
+            session()->flash('error', 'No stock locations found. Create a main stock location first under Stock locations (store keeper or manager).');
         }
 
         // Allow external links (e.g. from Stock Requisitions) to control initial stock view
@@ -221,7 +224,7 @@ class StockManagement extends Component
     {
         // Check if stock locations exist
         if (StockLocation::where('is_active', true)->count() === 0) {
-            session()->flash('error', 'No stock locations found. Please create at least one main stock location first. Only Manager and Super Admin can create stock locations.');
+            session()->flash('error', 'No stock locations found. Create a main stock location first under Stock locations (store keeper or manager).');
             return;
         }
         if (!$stockId && !$this->canEditStockItems) {

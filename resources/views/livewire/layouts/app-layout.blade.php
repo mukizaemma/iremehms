@@ -290,6 +290,9 @@
                         @if($user && $user->canManageStockItems())
                             <a href="{{ route('stock.management') }}" class="nav-item nav-link {{ request()->routeIs('stock.management') ? 'active' : '' }}"><i class="fa fa-boxes me-2"></i>Stock management</a>
                         @endif
+                        @if($user && $user->canManageStockLocations())
+                            <a href="{{ route('stock.locations') }}" class="nav-item nav-link {{ request()->routeIs('stock.locations') ? 'active' : '' }}"><i class="fa fa-map-marker-alt me-2"></i>Stock locations</a>
+                        @endif
                         <a href="{{ route('goods.receipts') }}" class="nav-item nav-link {{ request()->routeIs('goods.receipts') ? 'active' : '' }}"><i class="fa fa-truck-loading me-2"></i>Stock-in</a>
                         <a href="{{ route('stock.out') }}" class="nav-item nav-link {{ request()->routeIs('stock.out') ? 'active' : '' }}"><i class="fa fa-truck me-2"></i>Stock-out</a>
                         <a href="{{ route('stock.requisitions') }}" class="nav-item nav-link {{ request()->routeIs('stock.requisitions') ? 'active' : '' }}"><i class="fa fa-clipboard-list me-2"></i>Stock requisitions</a>

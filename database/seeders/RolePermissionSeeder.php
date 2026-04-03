@@ -59,6 +59,7 @@ class RolePermissionSeeder extends Seeder
 
         $this->assignByRoleSlug('store-keeper', [
             'back_office_stock_items',
+            'stock_authorize_requests',
             'stock_receive_goods', 'stock_issue', 'stock_open_shift', 'stock_close_shift',
         ]);
 

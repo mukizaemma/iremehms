@@ -27,10 +27,9 @@ class StockLocationManagement extends Component
         // Check if store module is enabled
         $this->ensureModuleEnabled('store');
         
-        // Check access - only Manager and Super Admin
         $user = Auth::user();
-        if (!$user->isSuperAdmin() && !$user->isManager()) {
-            abort(403, 'Only Manager and Super Admin can manage stock locations.');
+        if (! $user || ! $user->canManageStockLocations()) {
+            abort(403, 'You do not have permission to manage stock locations.');
         }
         
         $this->loadLocations();
