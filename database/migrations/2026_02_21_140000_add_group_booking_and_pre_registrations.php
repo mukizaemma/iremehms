@@ -8,8 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Note: do not use ->after('business_source_detail'); that column is added in a later migration (2026_02_28_120001).
         Schema::table('reservations', function (Blueprint $table) {
-            $table->string('group_name', 200)->nullable()->after('business_source_detail');
+            $table->string('group_name', 200)->nullable()->after('reservation_type');
             $table->unsignedSmallInteger('expected_guest_count')->nullable()->after('group_name');
         });
 
