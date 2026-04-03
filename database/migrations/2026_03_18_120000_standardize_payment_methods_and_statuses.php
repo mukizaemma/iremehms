@@ -36,32 +36,35 @@ return new class extends Migration
             }
         });
 
-        if (! Schema::hasColumn('reservation_payments', 'payment_status')) {
-            Schema::table('reservation_payments', function (Blueprint $table) {
-                $table->string('payment_status', 30)->default(PaymentCatalog::STATUS_PAID)->after('payment_method');
-            });
-        }
-
-        $rows = DB::table('reservation_payments')->select('*')->get();
-        foreach ($rows as $row) {
-            $method = PaymentCatalog::normalizeReservationMethod($row->payment_method ?? $row->payment_type);
-            $status = PaymentCatalog::STATUS_PAID;
-            if ($row->payment_type && strcasecmp((string) $row->payment_type, 'City Ledger') === 0) {
-                $status = PaymentCatalog::STATUS_DEBITS;
+        // reservation_payments is created in 2026_03_19_000001 (runs after this file); create migration includes payment_status.
+        if (Schema::hasTable('reservation_payments')) {
+            if (! Schema::hasColumn('reservation_payments', 'payment_status')) {
+                Schema::table('reservation_payments', function (Blueprint $table) {
+                    $table->string('payment_status', 30)->default(PaymentCatalog::STATUS_PAID)->after('payment_method');
+                });
             }
-            $status = PaymentCatalog::normalizeStatus($status);
-            DB::table('reservation_payments')->where('id', $row->id)->update([
-                'payment_method' => $method,
-                'payment_status' => $status,
-            ]);
-        }
 
-        $resIds = DB::table('reservation_payments')
-            ->where('status', 'confirmed')
-            ->distinct()
-            ->pluck('reservation_id');
-        foreach ($resIds as $rid) {
-            \App\Models\ReservationPayment::recomputeBalancesForReservation((int) $rid);
+            $rows = DB::table('reservation_payments')->select('*')->get();
+            foreach ($rows as $row) {
+                $method = PaymentCatalog::normalizeReservationMethod($row->payment_method ?? $row->payment_type);
+                $status = PaymentCatalog::STATUS_PAID;
+                if ($row->payment_type && strcasecmp((string) $row->payment_type, 'City Ledger') === 0) {
+                    $status = PaymentCatalog::STATUS_DEBITS;
+                }
+                $status = PaymentCatalog::normalizeStatus($status);
+                DB::table('reservation_payments')->where('id', $row->id)->update([
+                    'payment_method' => $method,
+                    'payment_status' => $status,
+                ]);
+            }
+
+            $resIds = DB::table('reservation_payments')
+                ->where('status', 'confirmed')
+                ->distinct()
+                ->pluck('reservation_id');
+            foreach ($resIds as $rid) {
+                \App\Models\ReservationPayment::recomputeBalancesForReservation((int) $rid);
+            }
         }
     }
 

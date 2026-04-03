@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\PaymentCatalog;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -21,6 +22,7 @@ return new class extends Migration
             // Modal uses: payment_type (City Ledger/Cash/Bank) + payment_method (Cash/Card/etc).
             $table->string('payment_type', 50)->nullable();
             $table->string('payment_method', 100)->nullable();
+            $table->string('payment_status', 30)->default(PaymentCatalog::STATUS_PAID);
 
             // Receiver (who recorded/received the money at the desk).
             $table->foreignId('received_by')->constrained('users')->restrictOnDelete();
