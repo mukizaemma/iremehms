@@ -287,6 +287,9 @@
                     {{-- Stock: non-manager roles only (managers use Stock hub) --}}
                     @if(! ($isEffectiveAccountant || $isEffectiveManagerLike) && ! $showBackend && $hasStore)
                         <div class="nav-item small text-muted px-3 py-2 mt-2">Stock</div>
+                        @if($user && $user->canManageStockItems())
+                            <a href="{{ route('stock.management') }}" class="nav-item nav-link {{ request()->routeIs('stock.management') ? 'active' : '' }}"><i class="fa fa-boxes me-2"></i>Stock management</a>
+                        @endif
                         <a href="{{ route('goods.receipts') }}" class="nav-item nav-link {{ request()->routeIs('goods.receipts') ? 'active' : '' }}"><i class="fa fa-truck-loading me-2"></i>Stock-in</a>
                         <a href="{{ route('stock.out') }}" class="nav-item nav-link {{ request()->routeIs('stock.out') ? 'active' : '' }}"><i class="fa fa-truck me-2"></i>Stock-out</a>
                         <a href="{{ route('stock.requisitions') }}" class="nav-item nav-link {{ request()->routeIs('stock.requisitions') ? 'active' : '' }}"><i class="fa fa-clipboard-list me-2"></i>Stock requisitions</a>

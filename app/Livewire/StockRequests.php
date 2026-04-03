@@ -22,7 +22,7 @@ class StockRequests extends Component
     public $tab = 'create'; // create, my_requests, pending, all_requests
     public $canAuthorize = false;
     public $canAuthorizeBarRestaurant = false; // Super Admin or approve_bar_restaurant_requisitions
-    public $canEditStockItems = false; // Super Admin or Manager only
+    public $canEditStockItems = false; // Managers, store keeper, or Manage stock items permission
     public $canSeeAllRequests = false; // Manager or Super Admin: see all requests with filters
     public $isRestaurantManagerOnly = false; // Restaurant Manager: only create Bar & Restaurant reqs, only see my_requests
 
@@ -63,13 +63,13 @@ class StockRequests extends Component
 
         $this->canAuthorize = Auth::user()->hasPermission('stock_authorize_requests');
         $this->canAuthorizeBarRestaurant = Auth::user()->isSuperAdmin() || Auth::user()->hasPermission('approve_bar_restaurant_requisitions');
-        $this->canEditStockItems = Auth::user() && (Auth::user()->isSuperAdmin() || Auth::user()->isManager());
+        $this->canEditStockItems = Auth::user() && Auth::user()->canManageStockItems();
         $this->canSeeAllRequests = Auth::user() && (Auth::user()->isSuperAdmin() || Auth::user()->isManager());
         $this->isRestaurantManagerOnly = $isRestaurantManager;
 
         $this->loadMainStocks();
         $this->canAuthorizeBarRestaurant = Auth::user()->isSuperAdmin() || Auth::user()->hasPermission('approve_bar_restaurant_requisitions');
-        $this->canEditStockItems = Auth::user() && (Auth::user()->isSuperAdmin() || Auth::user()->isManager());
+        $this->canEditStockItems = Auth::user() && Auth::user()->canManageStockItems();
         $this->canSeeAllRequests = Auth::user() && (Auth::user()->isSuperAdmin() || Auth::user()->isManager());
         $this->isRestaurantManagerOnly = Auth::user()->getEffectiveRole() && Auth::user()->getEffectiveRole()->slug === 'restaurant-manager';
 

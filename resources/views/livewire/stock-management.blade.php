@@ -1,9 +1,11 @@
 <div class="bg-light rounded p-4">
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h5 class="mb-0">Stock Management</h5>
-                <button class="btn btn-primary" wire:click="openStockForm">
-                    <i class="fa fa-plus me-2"></i>Add Stock Item
-                </button>
+                @if($canEditStockItems)
+                    <button class="btn btn-primary" wire:click="openStockForm">
+                        <i class="fa fa-plus me-2"></i>Add Stock Item
+                    </button>
+                @endif
             </div>
 
     @if (session()->has('message'))

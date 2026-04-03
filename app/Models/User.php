@@ -308,6 +308,25 @@ class User extends Authenticatable
     }
 
     /**
+     * Whether the user can add, edit, or delete stock master records (items).
+     */
+    public function canManageStockItems(): bool
+    {
+        if ($this->isSuperAdmin() || $this->isManager()) {
+            return true;
+        }
+        if ($this->isEffectiveStoreKeeper()) {
+            return true;
+        }
+        // Cashier dashboard links to stock (e.g. expense items); allow manage when they can reach the page
+        if ($this->getEffectiveRole()?->slug === 'cashier') {
+            return true;
+        }
+
+        return $this->hasPermission('back_office_stock_items');
+    }
+
+    /**
      * Get accessible modules for the user based on role and hotel configuration.
      * When Super Admin is "acting as" another role, returns only that role's modules.
      *

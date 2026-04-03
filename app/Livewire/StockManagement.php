@@ -114,7 +114,7 @@ class StockManagement extends Component
     /** Whether the current user can authorize stock requests (and thus do direct transfer without request) */
     public $canAuthorizeStockRequests = false;
 
-    /** Whether the current user can edit/delete stock items (Super Admin or Manager) */
+    /** Whether the current user can add/edit/delete stock items (managers, store keeper, or Manage stock items permission) */
     public $canEditStockItems = false;
 
     public function mount()
@@ -122,7 +122,7 @@ class StockManagement extends Component
         // Check if store module is enabled
         $this->ensureModuleEnabled('store');
         $this->canAuthorizeStockRequests = Auth::user() && Auth::user()->hasPermission('stock_authorize_requests');
-        $this->canEditStockItems = Auth::user() && (Auth::user()->isSuperAdmin() || Auth::user()->isManager());
+        $this->canEditStockItems = Auth::user() && Auth::user()->canManageStockItems();
 
         // Check if stock locations exist
         $locationsCount = StockLocation::where('is_active', true)->count();
@@ -224,9 +224,13 @@ class StockManagement extends Component
             session()->flash('error', 'No stock locations found. Please create at least one main stock location first. Only Manager and Super Admin can create stock locations.');
             return;
         }
-        // Only Super Admin or Manager can edit an existing stock item
+        if (!$stockId && !$this->canEditStockItems) {
+            session()->flash('error', 'You do not have permission to add stock items.');
+            return;
+        }
+        // Only authorized roles can edit an existing stock item
         if ($stockId && !$this->canEditStockItems) {
-            session()->flash('error', 'Only Super Admin or Manager can edit stock items.');
+            session()->flash('error', 'You do not have permission to edit stock items.');
             return;
         }
         
@@ -330,9 +334,14 @@ class StockManagement extends Component
             'department_id' => 'nullable|exists:departments,id',
         ]);
 
-        // Only Super Admin or Manager can update an existing stock item
+        if (!$this->editingStockId && !$this->canEditStockItems) {
+            session()->flash('error', 'You do not have permission to add stock items.');
+            return;
+        }
+
+        // Only authorized roles can update an existing stock item
         if ($this->editingStockId && !$this->canEditStockItems) {
-            session()->flash('error', 'Only Super Admin or Manager can edit stock items.');
+            session()->flash('error', 'You do not have permission to edit stock items.');
             return;
         }
 
@@ -529,7 +538,7 @@ class StockManagement extends Component
     public function deleteStock($stockId)
     {
         if (!$this->canEditStockItems) {
-            session()->flash('error', 'Only Super Admin or Manager can delete stock items.');
+            session()->flash('error', 'You do not have permission to delete stock items.');
             return;
         }
         $stock = Stock::find($stockId);
