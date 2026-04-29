@@ -26,18 +26,10 @@ class AccountantStockHub extends Component
     {
         $u = Auth::user();
 
-        $canViewStockReportsSidebarAccountant = (
-            $u->isSuperAdmin()
-            || $u->canNavigateModules()
-            || $u->hasPermission('stock_audit')
-            || $u->hasPermission('stock_logistics')
-            || $u->hasPermission('reports_view_all')
-            || $u->isEffectiveStoreKeeper()
-        );
+        $canViewStockReportsSidebarAccountant = $u->canViewStockReports();
 
         return view('livewire.navigation.accountant-stock-hub', [
             'canViewStockReportsSidebarAccountant' => $canViewStockReportsSidebarAccountant,
         ])->layout('livewire.layouts.app-layout');
     }
 }
-

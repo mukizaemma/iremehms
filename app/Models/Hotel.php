@@ -71,6 +71,7 @@ class Hotel extends Model
         'pos_payment_flow',
         'receipt_show_vat',
         'reports_show_vat',
+        'stock_daily_report_audit_enabled',
         'receipt_thank_you_text',
         'receipt_momo_label',
         'receipt_momo_value',
@@ -99,6 +100,7 @@ class Hotel extends Model
         'order_slip_hide_price' => 'boolean',
         'receipt_show_vat' => 'boolean',
         'reports_show_vat' => 'boolean',
+        'stock_daily_report_audit_enabled' => 'boolean',
         'use_bom_for_menu_items' => 'boolean',
     ];
 
@@ -106,6 +108,11 @@ class Hotel extends Model
     public function showsVatOnReports(): bool
     {
         return (bool) ($this->reports_show_vat ?? false);
+    }
+
+    public function isStockDailyReportAuditEnabled(): bool
+    {
+        return (bool) ($this->stock_daily_report_audit_enabled ?? false);
     }
 
     /** VAT breakdown on POS/guest receipts. */
@@ -178,6 +185,7 @@ class Hotel extends Model
     public function getTimezone(): string
     {
         $tz = $this->timezone ?? config('app.timezone', 'UTC');
+
         return is_string($tz) ? $tz : 'UTC';
     }
 
@@ -196,6 +204,7 @@ class Hotel extends Model
     public static function getTodayForHotel(): string
     {
         $hotel = static::getHotel();
+
         return $hotel ? $hotel->getTodayYmd() : \Carbon\Carbon::now()->format('Y-m-d');
     }
 
@@ -206,7 +215,7 @@ class Hotel extends Model
     public static function getHotel(): ?self
     {
         $user = auth()->user();
-        if (!$user) {
+        if (! $user) {
             return null;
         }
         if ($user->hotel_id) {
@@ -214,6 +223,7 @@ class Hotel extends Model
         }
         // Ireme user: optional "view as hotel" from session (for future use)
         $hotelId = session('current_hotel_id');
+
         return $hotelId ? static::find($hotelId) : null;
     }
 
@@ -224,6 +234,7 @@ class Hotel extends Model
     {
         $max = static::max('hotel_code');
         $next = ($max ? (int) $max + 1 : 100);
+
         return min(max($next, 100), 999);
     }
 
@@ -361,7 +372,7 @@ class Hotel extends Model
             'TZS' => 'TZS',
             'ETB' => 'ETB',
         ];
-        
+
         return $symbols[$this->getCurrency()] ?? $this->getCurrency();
     }
 
@@ -370,7 +381,7 @@ class Hotel extends Model
      */
     public function getLoginBackgroundImageUrl(): ?string
     {
-        if (!$this->login_background_image) {
+        if (! $this->login_background_image) {
             return null;
         }
 

@@ -19,7 +19,16 @@
             @endif
 
             <div class="col-6 col-md-4 col-lg-3">
+                @include('livewire.navigation.partials.hub-tile', ['href' => route('stock.daily-by-category'), 'icon' => 'fa-layer-group', 'label' => 'Daily stock by category'])
+            </div>
+            <div class="col-6 col-md-4 col-lg-3">
+                @include('livewire.navigation.partials.hub-tile', ['href' => route('stock.daily-selling-location'), 'icon' => 'fa-store', 'label' => 'Selling location daily'])
+            </div>
+            <div class="col-6 col-md-4 col-lg-3">
                 @include('livewire.navigation.partials.hub-tile', ['href' => route('stock.opening-closing-report'), 'icon' => 'fa-box-open', 'label' => 'Opening / closing report'])
+            </div>
+            <div class="col-6 col-md-4 col-lg-3">
+                @include('livewire.navigation.partials.hub-tile', ['href' => route('stock.location-activity-report'), 'icon' => 'fa-clipboard-list', 'label' => 'Stock by location report'])
             </div>
             <div class="col-6 col-md-4 col-lg-3">
                 @include('livewire.navigation.partials.hub-tile', ['href' => route('stock.movements'), 'icon' => 'fa-exchange-alt', 'label' => 'Stock movements'])

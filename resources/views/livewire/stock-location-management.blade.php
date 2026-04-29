@@ -33,12 +33,18 @@
                                 <th>Code</th>
                                 <th>Description</th>
                                 <th>Parent</th>
+                                <th class="text-end">Items</th>
+                                <th class="text-end">Low stock</th>
+                                <th class="text-end">Stock value</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach($locations as $location)
+                                @php
+                                    $stats = $locationStats[$location['id']] ?? ['items' => 0, 'low' => 0, 'value' => 0];
+                                @endphp
                                 <tr class="{{ $location['is_main_location'] ? 'table-primary' : '' }}">
                                     <td>
                                         @if($location['is_main_location'])
@@ -56,6 +62,19 @@
                                         @else
                                             <span class="text-muted">-</span>
                                         @endif
+                                    </td>
+                                    <td class="text-end text-nowrap small">
+                                        <a href="{{ route('stock.management', ['filter_stock_location_id' => $location['id'], 'filter_stock_type' => 'all']) }}" class="text-decoration-none fw-semibold" wire:navigate>{{ number_format($stats['items']) }}</a>
+                                    </td>
+                                    <td class="text-end text-nowrap small">
+                                        @if($stats['low'] > 0)
+                                            <a href="{{ route('stock.management', ['filter_stock_location_id' => $location['id'], 'filter_stock_type' => 'all', 'focus' => 'low']) }}" class="text-warning text-decoration-none fw-semibold" wire:navigate>{{ number_format($stats['low']) }}</a>
+                                        @else
+                                            <span class="text-muted">0</span>
+                                        @endif
+                                    </td>
+                                    <td class="text-end text-nowrap small">
+                                        <a href="{{ route('stock.management', ['filter_stock_location_id' => $location['id'], 'filter_stock_type' => 'all']) }}" class="text-decoration-none" wire:navigate>{{ \App\Helpers\CurrencyHelper::format($stats['value']) }}</a>
                                     </td>
                                     <td>
                                         @if($location['is_active'])

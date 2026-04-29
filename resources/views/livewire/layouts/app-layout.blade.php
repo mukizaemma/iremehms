@@ -213,7 +213,7 @@
                                 )
                             );
                             $backOfficeNavActive = request()->routeIs('back-office.hub')
-                                || request()->routeIs('subscription')
+                                || ($isEffectiveSuperAdmin && request()->routeIs('subscription'))
                                 || request()->routeIs('hotel-details')
                                 || request()->routeIs('departments.index')
                                 || request()->routeIs('shift.management')
@@ -300,17 +300,12 @@
                         <a href="{{ route('stock.movements') }}" class="nav-item nav-link {{ request()->routeIs('stock.movements') ? 'active' : '' }}"><i class="fa fa-exchange-alt me-2"></i>Stock movements</a>
 
                         @php
-                            $canViewStockReportsSidebar = $user && (
-                                $user->isEffectiveStoreKeeper()
-                                || $user->hasPermission('stock_audit')
-                                || $user->hasPermission('stock_logistics')
-                                || $user->hasPermission('reports_view_all')
-                                || $user->canNavigateModules()
-                            );
+                            $canViewStockReportsSidebar = $user && $user->canViewStockReports();
                         @endphp
                         @if($canViewStockReportsSidebar)
-                            <a href="{{ route('stock.reports') }}" class="nav-item nav-link {{ request()->routeIs('stock.reports') ? 'active' : '' }}"><i class="fa fa-chart-bar me-2"></i>Stock reports</a>
+                            <a href="{{ route('stock.reports') }}#stock-summary-inventory-category" class="nav-item nav-link {{ request()->routeIs('stock.reports') ? 'active' : '' }}"><i class="fa fa-chart-bar me-2"></i>Stock reports</a>
                             <a href="{{ route('stock.opening-closing-report') }}" class="nav-item nav-link {{ request()->routeIs('stock.opening-closing-report') ? 'active' : '' }}"><i class="fa fa-box-open me-2"></i>Opening / closing report</a>
+                            <a href="{{ route('stock.location-activity-report') }}" class="nav-item nav-link {{ request()->routeIs('stock.location-activity-report') ? 'active' : '' }}"><i class="fa fa-warehouse me-2"></i>Stock by location</a>
                             <a href="{{ route('general.monthly-sales-summary') }}" class="nav-item nav-link {{ request()->routeIs('general.monthly-sales-summary') ? 'active' : '' }}"><i class="fa fa-file-invoice me-2"></i>General report</a>
                         @endif
                     @endif
@@ -452,7 +447,7 @@
                     $isHotelSettingsPage = request()->routeIs('pos.tables')
                         || request()->routeIs('room-types.index')
                         || request()->routeIs('additional-charges.index')
-                        || request()->routeIs('subscription')
+                        || ($isEffectiveSuperAdmin && request()->routeIs('subscription'))
                         || request()->routeIs('restaurant.preparation-stations')
                         || request()->routeIs('restaurant.posting-stations')
                         || request()->routeIs('stock.pending-deductions')
@@ -465,9 +460,11 @@
                 @if($isHotelSettingsPage)
                     <div class="mb-3">
                         <ul class="nav nav-tabs">
-                            <li class="nav-item">
-                                <a class="nav-link {{ request()->routeIs('subscription') ? 'active' : '' }}" href="{{ route('subscription') }}">Subscription</a>
-                            </li>
+                            @if($isEffectiveSuperAdmin)
+                                <li class="nav-item">
+                                    <a class="nav-link {{ request()->routeIs('subscription') ? 'active' : '' }}" href="{{ route('subscription') }}">Subscription</a>
+                                </li>
+                            @endif
                             @if($hasRestaurant)
                                 <li class="nav-item">
                                     <a class="nav-link {{ request()->routeIs('pos.tables') ? 'active' : '' }}" href="{{ route('pos.tables') }}">Tables management</a>

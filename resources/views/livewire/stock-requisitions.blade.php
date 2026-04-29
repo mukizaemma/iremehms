@@ -24,17 +24,17 @@
     @else
     <div class="alert alert-info">
                 <i class="fa fa-info-circle me-2"></i>
-                <strong>Stock Requisitions</strong> allows you to request stock from:
+                Choose the right workflow:
                 <ul class="mb-0 mt-2">
-                    <li><strong>New Purchases:</strong> Request new stock items to be purchased</li>
-                    <li><strong>From Substocks:</strong> Request stock from substock locations</li>
-                    <li><strong>From Other Departments:</strong> Request stock transfers from other departments</li>
+                    <li><strong>Purchase (supplier)</strong> — buying new stock: <strong>Purchase requisitions</strong> (approval, then ordering / goods receipt).</li>
+                    <li><strong>Transfer / issue (no purchase)</strong> — moving or drawing existing stock (main ↔ sub-location, or main → department): <strong>Stock requests</strong> (approve, then issue on Stock out).</li>
+                    <li><strong>Edit / cancel</strong> — change a pending <strong>stock request</strong> with <strong>Edit request</strong>, or <strong>Request deletion</strong>; <strong>Item edit</strong> requests change master stock data.</li>
                 </ul>
     </div>
 
     <div class="card">
         <div class="card-header">
-            <h6 class="mb-0">Requisition Types</h6>
+            <h6 class="mb-0">Start here</h6>
         </div>
         <div class="card-body">
             <div class="row g-3">
@@ -42,9 +42,9 @@
                     <div class="card border-primary">
                         <div class="card-body text-center">
                             <i class="fa fa-shopping-cart fa-3x text-primary mb-3"></i>
-                            <h6>New Purchase</h6>
-                            <p class="text-muted small">Request new stock items to be purchased from suppliers</p>
-                            <a href="{{ route('purchase.requisitions') }}" class="btn btn-primary btn-sm">
+                            <h6>Purchase (supplier)</h6>
+                            <p class="text-muted small">New goods from a supplier — not a transfer from your own main stock</p>
+                            <a href="{{ route('purchase.requisitions', ['action' => 'add']) }}" class="btn btn-primary btn-sm">
                                 Create Requisition
                             </a>
                         </div>
@@ -54,10 +54,10 @@
                     <div class="card border-info">
                         <div class="card-body text-center">
                             <i class="fa fa-warehouse fa-3x text-info mb-3"></i>
-                            <h6>From Substock</h6>
-                            <p class="text-muted small">Request items from substock locations. If substock is empty, route request to main stock.</p>
-                            <a href="{{ route('stock.management', ['filter_stock_type' => 'substock']) }}" class="btn btn-info btn-sm">
-                                Create Requisition
+                            <h6>Transfer (main → sub)</h6>
+                            <p class="text-muted small">Stock request: move stock from <strong>main</strong> to a <strong>sub-location</strong> (packages vs base units as set on the item).</p>
+                            <a href="{{ route('stock.requests', ['action' => 'create', 'type' => 'transfer_substock']) }}" class="btn btn-info btn-sm">
+                                Stock transfer request
                             </a>
                         </div>
                     </div>
@@ -66,10 +66,10 @@
                     <div class="card border-success">
                         <div class="card-body text-center">
                             <i class="fa fa-exchange-alt fa-3x text-success mb-3"></i>
-                            <h6>From Other Department</h6>
-                            <p class="text-muted small">Departments (e.g. Housekeeping, Events) can request items like water or hygiene supplies from main stock.</p>
-                            <a href="{{ route('stock.management', ['filter_stock_type' => 'substock']) }}" class="btn btn-success btn-sm">
-                                Create Requisition
+                            <h6>Issue to department</h6>
+                            <p class="text-muted small">Stock request: issue from <strong>main stock</strong> to a department (e.g. housekeeping, events).</p>
+                            <a href="{{ route('stock.requests', ['action' => 'create', 'type' => 'issue_department']) }}" class="btn btn-success btn-sm">
+                                Issue request
                             </a>
                         </div>
                     </div>
@@ -82,10 +82,12 @@
     @if(!(Auth::user()->getEffectiveRole() && Auth::user()->getEffectiveRole()->slug === 'restaurant-manager'))
     <div class="card mt-4">
         <div class="card-header">
-            <h6 class="mb-0">Requisition History</h6>
+            <h6 class="mb-0">Track requests</h6>
         </div>
         <div class="card-body">
-            <p class="text-muted text-center py-4">Requisition functionality will be implemented here. This is a placeholder for future development.</p>
+            <p class="text-muted mb-2">Use <strong>Stock requests</strong> for transfer/issue approvals and status. Use <strong>Purchase requisitions</strong> for supplier purchase drafts and approvals.</p>
+            <a href="{{ route('stock.requests') }}" class="btn btn-outline-primary btn-sm me-2">Open stock requests</a>
+            <a href="{{ route('purchase.requisitions') }}" class="btn btn-outline-secondary btn-sm">Open purchase requisitions</a>
         </div>
     </div>
     @endif

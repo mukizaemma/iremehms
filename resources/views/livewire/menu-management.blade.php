@@ -91,6 +91,7 @@
                             <tr>
                                 <th>Name</th>
                                 <th>Type</th>
+                                <th>Sales</th>
                                 <th>Cost</th>
                                 <th>Price</th>
                                 <th>Unit</th>
@@ -108,6 +109,10 @@
                                         <div class="text-muted small">{{ $item['category']['name'] ?? 'N/A' }}</div>
                                     </td>
                                     <td><span class="badge bg-secondary">{{ $item['menu_item_type']['code'] ?? 'N/A' }}</span></td>
+                                    <td>
+                                        @php $sc = $item['sales_category'] ?? 'food'; @endphp
+                                        <span class="badge bg-{{ $sc === 'beverage' ? 'primary' : 'success' }}">{{ ucfirst($sc) }}</span>
+                                    </td>
                                     <td>{{ isset($item['menu_cost']) ? \App\Helpers\CurrencyHelper::format($item['menu_cost']) : '—' }}</td>
                                     <td>{{ \App\Helpers\CurrencyHelper::format($item['sale_price'] ?? 0) }}</td>
                                     <td>{{ $item['sale_unit'] ?? '—' }}</td>
@@ -217,6 +222,20 @@
                                         </select>
                                         <label for="menu_item_type_id">Item Type <span class="text-danger">*</span></label>
                                     </div>
+                                </div>
+                            </div>
+
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <select class="form-select" id="sales_category" wire:model.defer="sales_category" required>
+                                            @foreach(\App\Enums\SalesCategory::cases() as $sc)
+                                                <option value="{{ $sc->value }}">{{ $sc->label() }}</option>
+                                            @endforeach
+                                        </select>
+                                        <label for="sales_category">POS sales category <span class="text-danger">*</span></label>
+                                    </div>
+                                    <small class="text-muted">Summarized as Food or Beverage on POS sales reports.</small>
                                 </div>
                             </div>
 

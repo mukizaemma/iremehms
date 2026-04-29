@@ -50,6 +50,7 @@
                     <div class="form-floating">
                         <select class="form-select" id="filter_status" wire:model.live="filter_status">
                             <option value="">All Statuses</option>
+                            <option value="DRAFT">Draft</option>
                             <option value="PARTIAL">Partial</option>
                             <option value="COMPLETE">Complete</option>
                         </select>
@@ -71,12 +72,35 @@
         </div>
     </div>
 
+    @if($draftReceiptCount > 0)
+        <div class="alert alert-warning border-0 shadow-sm d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4" role="status">
+            <div class="mb-0">
+                <strong>Finish pending draft{{ $draftReceiptCount === 1 ? '' : 's' }}.</strong>
+                {{ $draftReceiptCount === 1
+                    ? 'One goods receipt is saved as a draft.'
+                    : $draftReceiptCount.' goods receipts are saved as drafts.' }}
+                Stock does not change until you open a draft and choose <strong>Confirm &amp; update stock</strong>.
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                @if($filter_status !== 'DRAFT')
+                    <button type="button" class="btn btn-sm btn-dark" wire:click="$set('filter_status', 'DRAFT')">
+                        Show drafts only
+                    </button>
+                @else
+                    <button type="button" class="btn btn-sm btn-outline-secondary" wire:click="$set('filter_status', '')">
+                        Show all statuses
+                    </button>
+                @endif
+            </div>
+        </div>
+    @endif
+
     <!-- Receipts List -->
     <div class="card">
         <div class="card-body">
             @if(count($receipts) > 0)
                 <div class="table-responsive">
-                    <table class="table table-hover">
+                    <table class="table table-hover align-middle">
                         <thead>
                             <tr>
                                 <th>Receipt #</th>
@@ -86,12 +110,16 @@
                                 <th>Status</th>
                                 <th>Total Cost</th>
                                 <th>Date</th>
-                                <th>Actions</th>
+                                <th style="min-width: 9rem;">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach($receipts as $receipt)
-                                <tr>
+                                @php
+                                    $st = $receipt['receipt_status'] ?? '';
+                                    $isDraft = $st === 'DRAFT';
+                                @endphp
+                                <tr class="{{ $isDraft ? 'table-warning' : '' }}">
                                     <td><strong>#{{ $receipt['receipt_id'] }}</strong></td>
                                     <td>
                                         @if($receipt['requisition'])
@@ -103,9 +131,12 @@
                                     <td>{{ $receipt['supplier']['name'] ?? 'N/A' }}</td>
                                     <td>{{ $receipt['received_by']['name'] ?? 'N/A' }}</td>
                                     <td>
-                                        <span class="badge bg-{{ $receipt['receipt_status'] === 'COMPLETE' ? 'success' : 'warning' }}">
-                                            {{ $receipt['receipt_status'] }}
+                                        <span class="badge {{ $isDraft ? 'bg-warning text-dark' : ($st === 'COMPLETE' ? 'bg-success' : 'bg-warning') }}">
+                                            {{ $st }}
                                         </span>
+                                        @if($isDraft)
+                                            <span class="d-block small text-muted mt-1">Awaiting confirmation</span>
+                                        @endif
                                     </td>
                                     <td>{{ \App\Helpers\CurrencyHelper::format(collect($receipt['items'])->sum('total_cost')) }}</td>
                                     <td>
@@ -114,9 +145,15 @@
                                             : (\Carbon\Carbon::parse($receipt['created_at'])->format('M d, Y')) }}
                                     </td>
                                     <td>
-                                        <button class="btn btn-sm btn-info" wire:click="openReceiptForm({{ $receipt['receipt_id'] }})" title="View">
-                                            <i class="fa fa-eye"></i>
-                                        </button>
+                                        @if($isDraft)
+                                            <button type="button" class="btn btn-sm btn-warning text-dark fw-semibold" wire:click="openReceiptForEdit({{ $receipt['receipt_id'] }})">
+                                                <i class="fa fa-arrow-right me-1"></i>Finish receipt
+                                            </button>
+                                        @else
+                                            <button type="button" class="btn btn-sm btn-info" wire:click="openReceiptForEdit({{ $receipt['receipt_id'] }})" title="View">
+                                                <i class="fa fa-eye me-1"></i>View
+                                            </button>
+                                        @endif
                                     </td>
                                 </tr>
                             @endforeach
@@ -135,7 +172,14 @@
             <div class="modal-dialog modal-dialog-centered modal-xl">
                 <div class="modal-content" style="z-index: 1051;">
                     <div class="modal-header">
-                        <h5 class="modal-title">Goods Receipt Note</h5>
+                        <h5 class="modal-title">
+                            Goods Receipt Note
+                            @if($receiptReadOnly)
+                                <span class="badge bg-success ms-2">Posted</span>
+                            @elseif($editingReceiptId)
+                                <span class="badge bg-secondary ms-2">Draft #{{ $editingReceiptId }}</span>
+                            @endif
+                        </h5>
                         <button type="button" class="btn-close" wire:click="closeReceiptForm"></button>
                     </div>
                     <form wire:submit.prevent>
@@ -153,7 +197,7 @@
                             <div class="row g-3 mb-3">
                                 <div class="col-md-4">
                                     <div class="form-floating">
-                                        <select class="form-select" id="supplier_id" wire:model.defer="supplier_id" required {{ $selectedRequisitionId ? 'disabled' : '' }}>
+                                        <select class="form-select" id="supplier_id" wire:model.defer="supplier_id" required {{ $selectedRequisitionId || $receiptReadOnly ? 'disabled' : '' }}>
                                             <option value="">Select Supplier</option>
                                             @foreach($suppliers as $supplier)
                                                 <option value="{{ $supplier->supplier_id }}">{{ $supplier->name }}</option>
@@ -164,7 +208,7 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-floating">
-                                        <select class="form-select" id="department_id" wire:model.defer="department_id" required {{ $selectedRequisitionId ? 'disabled' : '' }}>
+                                        <select class="form-select" id="department_id" wire:model.defer="department_id" required {{ $selectedRequisitionId || $receiptReadOnly ? 'disabled' : '' }}>
                                             <option value="">Select Department</option>
                                             @foreach($departments as $department)
                                                 <option value="{{ $department->id }}">{{ $department->name }}</option>
@@ -175,17 +219,17 @@
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-floating">
-                                        <select class="form-select" id="receipt_status" wire:model.defer="receipt_status">
+                                        <select class="form-select" id="receipt_status" wire:model.defer="receipt_status" @if($receiptReadOnly) disabled @endif>
                                             <option value="COMPLETE">Complete</option>
                                             <option value="PARTIAL">Partial</option>
                                         </select>
-                                        <label for="receipt_status">Receipt Status</label>
+                                        <label for="receipt_status">Posting status (when confirming)</label>
                                     </div>
                                 </div>
                             </div>
 
                             <div class="form-floating mb-3">
-                                <textarea class="form-control" id="notes" wire:model.defer="notes" style="height: 100px" placeholder="Notes"></textarea>
+                                <textarea class="form-control" id="notes" wire:model.defer="notes" style="height: 100px" placeholder="Notes" @if($receiptReadOnly) disabled @endif></textarea>
                                 <label for="notes">Notes (Optional)</label>
                             </div>
 
@@ -200,8 +244,7 @@
                                 <table class="table table-sm table-bordered">
                                     <thead class="table-light">
                                         <tr>
-                                            <th>Item</th>
-                                            <th>Location</th>
+                                            <th style="min-width: 220px;">Item</th>
                                             <th>Requested Qty</th>
                                             <th>Received Qty</th>
                                             <th>Unit</th>
@@ -225,22 +268,16 @@
                                                     $rowClass = 'table-info'; // Excess
                                                 }
                                             @endphp
-                                            <tr class="{{ $rowClass }}">
+                                            <tr class="{{ $rowClass }}" wire:key="receipt-line-{{ $index }}">
                                                 <td>
-                                                    <select class="form-select form-select-sm" wire:model.live="receiptItems.{{ $index }}.item_id" required>
-                                                        <option value="">Select Item</option>
-                                                        @foreach($stocks as $stock)
-                                                            <option value="{{ $stock->id }}">{{ $stock->name }}</option>
+                                                    <input type="text" class="form-control form-control-sm mb-1" placeholder="Search name, code…" wire:model.live.debounce.300ms="receiptItemSearch.{{ $index }}" autocomplete="off" @if($receiptReadOnly) disabled @endif>
+                                                    <select class="form-select form-select-sm" wire:model.live="receiptItems.{{ $index }}.item_id" required @if($receiptReadOnly) disabled @endif>
+                                                        <option value="">Select item</option>
+                                                        @foreach($this->stocksForReceiptRow($index) as $stock)
+                                                            <option value="{{ data_get($stock, 'id') }}">{{ data_get($stock, 'name') }}@if(data_get($stock, 'code')) ({{ data_get($stock, 'code') }})@endif</option>
                                                         @endforeach
                                                     </select>
-                                                </td>
-                                                <td>
-                                                    <select class="form-select form-select-sm" wire:model.defer="receiptItems.{{ $index }}.location_id" required>
-                                                        <option value="">Select Location</option>
-                                                        @foreach($stockLocations as $location)
-                                                            <option value="{{ $location->id }}">{{ $location->name }}</option>
-                                                        @endforeach
-                                                    </select>
+                                                    <small class="text-muted">Location is taken from the stock item’s default location.</small>
                                                 </td>
                                                 <td>
                                                     <input type="number" step="0.01" class="form-control form-control-sm" value="{{ $requestedQty }}" disabled>
@@ -255,10 +292,10 @@
                                                     @endif
                                                 </td>
                                                 <td>
-                                                    <input type="number" step="0.01" min="0.01" class="form-control form-control-sm" wire:model.live.debounce.300ms="receiptItems.{{ $index }}.quantity_received" required>
+                                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm" wire:model.live.debounce.300ms="receiptItems.{{ $index }}.quantity_received" @if(!$receiptReadOnly) required @endif @if($receiptReadOnly) disabled @endif>
                                                 </td>
                                                 <td>
-                                                    <select class="form-select form-select-sm" wire:model.defer="receiptItems.{{ $index }}.unit_id">
+                                                    <select class="form-select form-select-sm" wire:model.defer="receiptItems.{{ $index }}.unit_id" @if($receiptReadOnly) disabled @endif>
                                                         <option value="">Select Unit</option>
                                                         <option value="pcs">pcs - Pieces</option>
                                                         <option value="kg">kg - Kilograms</option>
@@ -298,25 +335,27 @@
                                                     <span class="text-muted">{{ $expiryFormatted }}</span>
                                                 </td>
                                                 <td>
-                                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm" wire:model.live.debounce.300ms="receiptItems.{{ $index }}.unit_cost" required>
+                                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm" wire:model.live.debounce.300ms="receiptItems.{{ $index }}.unit_cost" @if(!$receiptReadOnly) required @endif @if($receiptReadOnly) disabled @endif>
                                                 </td>
                                                 <td>
                                                     <strong>{{ \App\Helpers\CurrencyHelper::format($item['total_cost'] ?? (($item['quantity_received'] ?? 0) * ($item['unit_cost'] ?? 0))) }}</strong>
                                                 </td>
                                                 <td>
-                                                    <input type="text" class="form-control form-control-sm" wire:model.defer="receiptItems.{{ $index }}.notes" placeholder="Notes">
+                                                    <input type="text" class="form-control form-control-sm" wire:model.defer="receiptItems.{{ $index }}.notes" placeholder="Notes" @if($receiptReadOnly) disabled @endif>
                                                 </td>
                                                 <td>
-                                                    <button type="button" class="btn btn-sm btn-danger" wire:click="removeReceiptItem({{ $index }})" wire:confirm="Remove this item from the receipt?">
-                                                        <i class="fa fa-trash"></i>
-                                                    </button>
+                                                    @if(!$receiptReadOnly)
+                                                        <button type="button" class="btn btn-sm btn-danger" wire:click="removeReceiptItem({{ $index }})" wire:confirm="Remove this item from the receipt?">
+                                                            <i class="fa fa-trash"></i>
+                                                        </button>
+                                                    @endif
                                                 </td>
                                             </tr>
                                         @endforeach
                                     </tbody>
                                     <tfoot>
                                         <tr class="table-primary">
-                                            <th colspan="7" class="text-end">Total:</th>
+                                            <th colspan="6" class="text-end">Total:</th>
                                             <th>{{ \App\Helpers\CurrencyHelper::format(collect($receiptItems)->sum('total_cost')) }}</th>
                                             <th colspan="2"></th>
                                         </tr>
@@ -324,19 +363,30 @@
                                 </table>
                             </div>
 
-                            <button type="button" class="btn btn-sm btn-success mb-3" wire:click="addReceiptItem">
-                                <i class="fa fa-plus me-2"></i>Add Item
-                            </button>
+                            @if(!$receiptReadOnly)
+                                <button type="button" class="btn btn-sm btn-success mb-3" wire:click="addReceiptItem">
+                                    <i class="fa fa-plus me-2"></i>Add Item
+                                </button>
+                            @endif
                         </div>
                         <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" wire:click="closeReceiptForm" wire:loading.attr="disabled">Cancel</button>
-                            <button type="button" class="btn btn-primary" wire:click="saveReceipt" wire:loading.attr="disabled" wire:target="saveReceipt" wire:confirm="Confirm this goods receipt and update stock? Quantities and costs will be saved and stock levels will be updated.">
-                                <span wire:loading.remove wire:target="saveReceipt">Confirm Receipt & Update Stock</span>
-                                <span wire:loading wire:target="saveReceipt">
-                                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
-                                    Processing...
-                                </span>
-                            </button>
+                            <button type="button" class="btn btn-secondary" wire:click="closeReceiptForm" wire:loading.attr="disabled" wire:target="saveDraft,confirmReceipt">Cancel</button>
+                            @if(!$receiptReadOnly)
+                                <button type="button" class="btn btn-outline-primary" wire:click="saveDraft" wire:loading.attr="disabled" wire:target="saveDraft">
+                                    <span wire:loading.remove wire:target="saveDraft">Save draft</span>
+                                    <span wire:loading wire:target="saveDraft">
+                                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                        Saving…
+                                    </span>
+                                </button>
+                                <button type="button" class="btn btn-primary" wire:click="confirmReceipt" wire:loading.attr="disabled" wire:target="confirmReceipt" wire:confirm="Confirm this goods receipt and post to stock? This updates inventory and cannot be undone from this screen.">
+                                    <span wire:loading.remove wire:target="confirmReceipt">Confirm &amp; update stock</span>
+                                    <span wire:loading wire:target="confirmReceipt">
+                                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                        Posting…
+                                    </span>
+                                </button>
+                            @endif
                         </div>
                     </form>
                 </div>

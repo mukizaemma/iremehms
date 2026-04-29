@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Enums\InventoryCategory;
 use App\Models\Department;
 use App\Models\Hotel;
 use App\Models\ItemType;
@@ -13,13 +14,15 @@ use App\Services\OperationalShiftActionGate;
 use App\Services\TimeAndShiftResolver;
 use App\Support\ActivityLogModule;
 use App\Traits\ChecksModuleStatus;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
 class StockManagement extends Component
 {
-    use WithPagination, ChecksModuleStatus;
+    use ChecksModuleStatus, WithPagination;
 
     protected function assertStoreOperationalShiftAllowed(): bool
     {
@@ -39,74 +42,153 @@ class StockManagement extends Component
     }
 
     public $stocks = [];
+
     public $itemTypes = [];
+
     public $departments = [];
+
     public $stockLocations = [];
+
     public $showStockForm = false;
+
     public $editingStockId = null;
+
     public $showMovementForm = false;
+
     public $selectedStockId = null;
+
     public $showMainToSubstockTransferForm = false;
+
     public $selectedMainStockId = null;
-    
+
     // Stock form fields - All required attributes
     public $name = '';
+
     public $use_barcode = false;
+
     public $barcode = '';
+
     public $item_type_id = null; // MANDATORY: Assets, Expenses, Finished Product, Raw Material, Service
+
+    public string $inventory_category = 'dry_goods';
+
     public $package_unit = '';
+
     public $package_size = null; // units per package (e.g. 24 bottles per case)
+
     public $qty_unit = '';
+
     public $purchase_price = 0;
+
     public $sale_price = 0;
+
     public $tax_type = '0%';
+
     public $beginning_stock_qty = 0;
+
     public $current_stock = 0;
+
     public $safety_stock = 0;
+
+    /** When package_size + package_unit are set, quantities are entered in purchase units (e.g. cases); saved as base units (e.g. bottles). */
+    public $beginning_stock_purchase = null;
+
+    public $current_stock_purchase = null;
+
+    public $safety_stock_purchase = null;
+
     public $use_expiration = false;
+
     public $expiration_date = null;
+
     public $description = '';
+
     public $stock_location_id = null; // MANDATORY: Main or sub-stock location
-    
+
     // Legacy fields (kept for compatibility)
     public $code = '';
+
     public $quantity = 0;
+
     public $unit = '';
+
     public $unit_price = 0;
+
     public $department_id = null;
+
     public $is_sellable = null;
+
     public $is_consumable = null;
+
     public $tracking_method = 'quantity';
+
     public $expected_lifespan = null;
+
     public $reorder_level = null;
+
     public $reorder_quantity = null;
+
     public $location = '';
-    
+
     // Transfer form fields
     public $transfer_quantity = 0;
+
     public $transfer_notes = '';
+
     public $selectedSubstockLocationId = null;
-    
+
     // External transfer fields
     public $external_transfer_type = 'client';
+
     public $recipient_name = '';
+
     public $recipient_details = '';
+
     public $external_transfer_items = []; // Array of items with prices
+
     public $external_transfer_total = 0;
-    
+
     // Movement form fields
     public $movement_type = 'PURCHASE';
+
     public $movement_quantity = 0;
+
     public $movement_unit_price = 0;
+
     public $from_department_id = null;
+
     public $to_department_id = null;
+
     public $movement_reason = '';
+
     public $movement_notes = '';
-    
+
     // Filters
     public $filter_item_type = '';
+
+    public string $filter_inventory_category = '';
+
     public $filter_stock_type = 'main'; // main, substock, all
+
     public $search = '';
+
+    /** When set, list is limited to this stock location (e.g. drill-down from Stock Locations). */
+    #[Url]
+    public ?int $filter_stock_location_id = null;
+
+    public ?string $filterStockLocationName = null;
+
+    /** Drill-down: filter table to low stock or expired lines; summary counts stay for full filtered scope */
+    #[Url]
+    public ?string $focus = null;
+
+    public int $summaryTotalItems = 0;
+
+    public float $summaryTotalValue = 0;
+
+    public int $summaryLowCount = 0;
+
+    public int $summaryExpiredCount = 0;
 
     /** Substock totals per product name (base qty and package qty) for "In substocks" on main rows */
     public $substockTotalsByName = [];
@@ -137,9 +219,9 @@ class StockManagement extends Component
         if (request()->has('filter_stock_type')) {
             $this->filter_stock_type = request()->get('filter_stock_type', 'main');
         }
-        
+
         $this->loadData();
-        
+
         // Check if action=add is in the request
         if (request()->has('action') && request()->get('action') === 'add') {
             if ($locationsCount > 0) {
@@ -155,7 +237,7 @@ class StockManagement extends Component
 
         $this->itemTypes = ItemType::active()->get();
         $deptQuery = Department::where('is_active', true);
-        if (!empty($enabledDepartments)) {
+        if (! empty($enabledDepartments)) {
             $deptQuery->whereIn('id', $enabledDepartments);
         }
         $this->departments = $deptQuery->get();
@@ -163,47 +245,148 @@ class StockManagement extends Component
         $this->loadStocks();
     }
 
-    public function loadStocks()
+    /**
+     * Stock rows for the current search / item type / main vs substock filters (not drill-down focus).
+     */
+    protected function buildStockBaseQuery(): Builder
     {
-        $hotel = \App\Models\Hotel::getHotel();
+        $hotel = Hotel::getHotel();
         $enabledDepartments = is_array($hotel->enabled_departments ?? null) ? $hotel->enabled_departments : [];
 
-        $query = Stock::with(['itemType', 'department', 'stockLocation']);
-        
+        $query = Stock::query()->with(['itemType', 'stockLocation']);
+
         if ($this->filter_item_type) {
             $query->where('item_type_id', $this->filter_item_type);
         }
-        
+
+        if ($this->filter_inventory_category !== '') {
+            $query->where('inventory_category', $this->filter_inventory_category);
+        }
+
         if ($this->search) {
-            $query->where(function($q) {
-                $q->where('name', 'like', '%' . $this->search . '%')
-                  ->orWhere('code', 'like', '%' . $this->search . '%')
-                  ->orWhere('barcode', 'like', '%' . $this->search . '%');
+            $query->where(function ($q) {
+                $q->where('name', 'like', '%'.$this->search.'%')
+                    ->orWhere('code', 'like', '%'.$this->search.'%')
+                    ->orWhere('barcode', 'like', '%'.$this->search.'%');
             });
         }
 
-        if (!empty($enabledDepartments)) {
-            $query->whereIn('department_id', $enabledDepartments);
+        if (! empty($enabledDepartments)) {
+            $query->where(function ($q) use ($enabledDepartments) {
+                $q->whereIn('department_id', $enabledDepartments)
+                    ->orWhereNull('department_id');
+            });
         }
-        
-        $this->stocks = $query->with('stockLocation')->orderBy('name')->get()->toArray();
-        $this->computeSubstockTotals();
+
+        if ($this->filter_stock_type === 'main') {
+            $query->whereHas('stockLocation', function ($q) {
+                $q->where('is_main_location', true);
+            });
+        } elseif ($this->filter_stock_type === 'substock') {
+            $query->whereHas('stockLocation', function ($q) {
+                $q->where('is_main_location', false);
+            });
+        }
+
+        if ($this->filter_stock_location_id) {
+            $query->where('stock_location_id', $this->filter_stock_location_id);
+        }
+
+        return $query;
+    }
+
+    public function clearStockLocationFilter(): void
+    {
+        if ($this->filter_stock_location_id === null) {
+            return;
+        }
+        $this->filter_stock_location_id = null;
+        $this->focus = null;
+        $this->loadStocks();
+    }
+
+    public function clearFocus(): void
+    {
+        if ($this->focus === null) {
+            return;
+        }
+        $this->focus = null;
+        $this->loadStocks();
+    }
+
+    public function setFocus(string $focus): void
+    {
+        $this->focus = in_array($focus, ['low', 'expired'], true) ? $focus : null;
+        $this->loadStocks();
+    }
+
+    public function loadStocks()
+    {
+        if ($this->filter_stock_location_id
+            && ! StockLocation::whereKey($this->filter_stock_location_id)->exists()) {
+            $this->filter_stock_location_id = null;
+        }
+
+        $this->filterStockLocationName = $this->filter_stock_location_id
+            ? StockLocation::find($this->filter_stock_location_id)?->name
+            : null;
+
+        if ($this->focus !== null && ! in_array($this->focus, ['low', 'expired'], true)) {
+            $this->focus = null;
+        }
+
+        $baseQuery = $this->buildStockBaseQuery();
+
+        $forSummary = (clone $baseQuery)->get();
+        $this->summaryTotalItems = $forSummary->count();
+        $this->summaryTotalValue = round($forSummary->sum(function (Stock $s) {
+            $qty = (float) ($s->current_stock ?? $s->quantity ?? 0);
+
+            return $qty * (float) ($s->purchase_price ?? 0);
+        }), 2);
+        $this->summaryLowCount = $forSummary->filter(fn (Stock $s) => $s->isLowStock())->count();
+        $this->summaryExpiredCount = $forSummary->filter(fn (Stock $s) => $s->isExpiredAtRisk())->count();
+
+        $tableQuery = clone $baseQuery;
+        if ($this->focus === 'low') {
+            $tableQuery->where(function ($q) {
+                $q->where(function ($q2) {
+                    $q2->where('safety_stock', '>', 0)
+                        ->whereColumn('current_stock', '<', 'safety_stock');
+                })->orWhere(function ($q2) {
+                    $q2->whereNotNull('reorder_level')
+                        ->whereColumn('current_stock', '<=', 'reorder_level');
+                });
+            });
+        } elseif ($this->focus === 'expired') {
+            $tableQuery->where('use_expiration', true)
+                ->whereDate('expiration_date', '<', now()->toDateString())
+                ->where('current_stock', '>', 0);
+        }
+
+        $fullRows = (clone $baseQuery)->orderBy('name')->get()->toArray();
+        $this->stocks = $tableQuery->orderBy('name')->get()->toArray();
+        $this->computeSubstockTotals($fullRows);
     }
 
     /**
      * Compute total quantity in substocks per product name (for display on main-stock rows).
+     * Pass the full list for the current filters (ignoring drill-down focus) so main rows still show substock totals.
+     *
+     * @param  array<int, array<string, mixed>>|null  $rows
      */
-    protected function computeSubstockTotals(): void
+    protected function computeSubstockTotals(?array $rows = null): void
     {
+        $rows = $rows ?? $this->stocks;
         $this->substockTotalsByName = [];
-        foreach ($this->stocks as $s) {
+        foreach ($rows as $s) {
             $loc = $s['stock_location'] ?? null;
-            if (!$loc || !empty($loc['is_main_location'])) {
+            if (! $loc || ! empty($loc['is_main_location'])) {
                 continue;
             }
             $name = $s['name'];
             $qty = (float) ($s['current_stock'] ?? $s['quantity'] ?? 0);
-            if (!isset($this->substockTotalsByName[$name])) {
+            if (! isset($this->substockTotalsByName[$name])) {
                 $pkgSize = isset($s['package_size']) && $s['package_size'] > 0 ? (float) $s['package_size'] : 0;
                 $this->substockTotalsByName[$name] = [
                     'base_qty' => 0,
@@ -225,26 +408,32 @@ class StockManagement extends Component
         // Check if stock locations exist
         if (StockLocation::where('is_active', true)->count() === 0) {
             session()->flash('error', 'No stock locations found. Create a main stock location first under Stock locations (store keeper or manager).');
+
             return;
         }
-        if (!$stockId && !$this->canEditStockItems) {
+        if (! $stockId && ! $this->canEditStockItems) {
             session()->flash('error', 'You do not have permission to add stock items.');
+
             return;
         }
         // Only authorized roles can edit an existing stock item
-        if ($stockId && !$this->canEditStockItems) {
+        if ($stockId && ! $this->canEditStockItems) {
             session()->flash('error', 'You do not have permission to edit stock items.');
+
             return;
         }
-        
+
         $this->editingStockId = $stockId;
-        
+
         if ($stockId) {
             $stock = Stock::find($stockId);
             $this->name = $stock->name;
             $this->use_barcode = $stock->use_barcode ?? false;
             $this->barcode = $stock->barcode ?? '';
             $this->item_type_id = $stock->item_type_id;
+            $this->inventory_category = $stock->inventory_category
+                ? (string) $stock->inventory_category
+                : InventoryCategory::DryGoods->value;
             $this->package_unit = $stock->package_unit ?? '';
             $this->package_size = $stock->package_size ?? null;
             $this->qty_unit = $stock->qty_unit ?? '';
@@ -258,20 +447,75 @@ class StockManagement extends Component
             $this->expiration_date = $stock->expiration_date;
             $this->description = $stock->description ?? '';
             $this->stock_location_id = $stock->stock_location_id;
-            
+
             // Legacy fields
             $this->code = $stock->code ?? '';
             $this->quantity = $stock->quantity ?? 0;
             $this->unit = $stock->unit ?? '';
             $this->unit_price = $stock->unit_price ?? 0;
             $this->department_id = $stock->department_id;
+            $this->hydratePurchaseQuantityFieldsFromBase();
         } else {
             $this->resetStockForm();
         }
-        
+
         $this->showStockForm = true;
     }
 
+    /**
+     * True when stock qty should be entered in purchase units (e.g. cases) and converted to base units for storage.
+     */
+    public function usesPurchaseUnitQuantities(): bool
+    {
+        $pkg = (float) ($this->package_size ?? 0);
+
+        return $pkg > 0 && $this->package_unit !== null && $this->package_unit !== '';
+    }
+
+    /**
+     * After loading or when package settings change, keep purchase-unit fields in sync with base fields.
+     */
+    public function hydratePurchaseQuantityFieldsFromBase(): void
+    {
+        if (! $this->usesPurchaseUnitQuantities()) {
+            return;
+        }
+        $pkg = (float) $this->package_size;
+        if ($pkg <= 0) {
+            return;
+        }
+        $this->beginning_stock_purchase = round(((float) $this->beginning_stock_qty) / $pkg, 6);
+        $this->current_stock_purchase = round(((float) $this->current_stock) / $pkg, 6);
+        $s = (float) ($this->safety_stock ?? 0);
+        $this->safety_stock_purchase = $s > 0 ? round($s / $pkg, 6) : null;
+    }
+
+    public function updatedPackageSize(): void
+    {
+        $this->hydratePurchaseQuantityFieldsFromBase();
+    }
+
+    public function updatedPackageUnit(): void
+    {
+        $this->hydratePurchaseQuantityFieldsFromBase();
+    }
+
+    /**
+     * Convert purchase-unit inputs into beginning_stock_qty, current_stock, safety_stock (base units).
+     */
+    protected function applyPurchaseQuantitiesToBaseFields(): void
+    {
+        if (! $this->usesPurchaseUnitQuantities()) {
+            return;
+        }
+        $pkg = (float) $this->package_size;
+        $this->beginning_stock_qty = round(((float) ($this->beginning_stock_purchase ?? 0)) * $pkg, 4);
+        $this->current_stock = round(((float) ($this->current_stock_purchase ?? 0)) * $pkg, 4);
+        $safetyPur = $this->safety_stock_purchase;
+        $this->safety_stock = ($safetyPur !== null && $safetyPur !== '')
+            ? round((float) $safetyPur * $pkg, 4)
+            : 0;
+    }
 
     public function closeStockForm()
     {
@@ -286,6 +530,7 @@ class StockManagement extends Component
         $this->use_barcode = false;
         $this->barcode = '';
         $this->item_type_id = null;
+        $this->inventory_category = InventoryCategory::DryGoods->value;
         $this->package_unit = '';
         $this->package_size = null;
         $this->qty_unit = '';
@@ -295,11 +540,14 @@ class StockManagement extends Component
         $this->beginning_stock_qty = 0;
         $this->current_stock = 0;
         $this->safety_stock = 0;
+        $this->beginning_stock_purchase = 0;
+        $this->current_stock_purchase = 0;
+        $this->safety_stock_purchase = null;
         $this->use_expiration = false;
         $this->expiration_date = null;
         $this->description = '';
         $this->stock_location_id = null;
-        
+
         // Legacy fields
         $this->code = '';
         $this->quantity = 0;
@@ -316,11 +564,24 @@ class StockManagement extends Component
 
     public function saveStock()
     {
+        // Item type is now internal (not user-selected in CRUD). Infer from inventory category.
+        $this->item_type_id = $this->resolveItemTypeIdFromInventoryCategory();
+
+        if ($this->usesPurchaseUnitQuantities()) {
+            $this->validate([
+                'beginning_stock_purchase' => 'required|numeric|min:0',
+                'current_stock_purchase' => 'required|numeric|min:0',
+                'safety_stock_purchase' => 'nullable|numeric|min:0',
+            ]);
+            $this->applyPurchaseQuantitiesToBaseFields();
+        }
+
         $this->validate([
             'name' => 'required|string|max:255',
             'use_barcode' => 'boolean',
-            'barcode' => 'required_if:use_barcode,true|nullable|string|max:255|unique:stocks,barcode,' . ($this->editingStockId ?? ''),
+            'barcode' => 'required_if:use_barcode,true|nullable|string|max:255|unique:stocks,barcode,'.($this->editingStockId ?? ''),
             'item_type_id' => 'required|exists:item_types,id', // MANDATORY: Assets, Expenses, Finished Product, Raw Material, Service
+            'inventory_category' => 'required|in:'.implode(',', array_map(fn (InventoryCategory $c) => $c->value, InventoryCategory::ordered())),
             'package_unit' => 'nullable|string|max:50',
             'package_size' => 'nullable|numeric|min:0',
             'qty_unit' => 'nullable|string|max:50',
@@ -337,14 +598,16 @@ class StockManagement extends Component
             'department_id' => 'nullable|exists:departments,id',
         ]);
 
-        if (!$this->editingStockId && !$this->canEditStockItems) {
+        if (! $this->editingStockId && ! $this->canEditStockItems) {
             session()->flash('error', 'You do not have permission to add stock items.');
+
             return;
         }
 
         // Only authorized roles can update an existing stock item
-        if ($this->editingStockId && !$this->canEditStockItems) {
+        if ($this->editingStockId && ! $this->canEditStockItems) {
             session()->flash('error', 'You do not have permission to edit stock items.');
+
             return;
         }
 
@@ -358,6 +621,7 @@ class StockManagement extends Component
                 'use_barcode' => $this->use_barcode,
                 'barcode' => $this->use_barcode ? $this->barcode : null,
                 'item_type_id' => $this->item_type_id,
+                'inventory_category' => $this->inventory_category,
                 'package_unit' => $this->package_unit,
                 'package_size' => $this->package_size,
                 'qty_unit' => $this->qty_unit,
@@ -384,6 +648,7 @@ class StockManagement extends Component
                 'use_barcode' => $this->use_barcode,
                 'barcode' => $this->use_barcode ? $this->barcode : null,
                 'item_type_id' => $this->item_type_id,
+                'inventory_category' => $this->inventory_category,
                 'package_unit' => $this->package_unit,
                 'package_size' => $this->package_size,
                 'qty_unit' => $this->qty_unit,
@@ -410,16 +675,34 @@ class StockManagement extends Component
         $this->loadStocks();
     }
 
+    protected function resolveItemTypeIdFromInventoryCategory(): ?int
+    {
+        $category = InventoryCategory::tryFrom($this->inventory_category);
+        if (! $category) {
+            return null;
+        }
+
+        $code = match ($category) {
+            InventoryCategory::Assets => 'ASSETS',
+            InventoryCategory::NonFoodMaterials => 'EXPENSES',
+            InventoryCategory::Beverage => 'FINISHED_PRODUCT',
+            default => 'RAW_MATERIAL',
+        };
+
+        return ItemType::where('code', $code)->value('id');
+    }
+
     public function openMovementForm($stockId)
     {
         $this->selectedStockId = $stockId;
         $stock = Stock::find($stockId);
-        
-        if (!$stock || !$stock->itemType) {
+
+        if (! $stock || ! $stock->itemType) {
             session()->flash('error', 'Stock must have an item type to record movements.');
+
             return;
         }
-        
+
         $this->movement_type = 'PURCHASE';
         $this->movement_quantity = 0;
         $this->movement_unit_price = $stock->unit_price ?? 0;
@@ -427,7 +710,7 @@ class StockManagement extends Component
         $this->to_department_id = $stock->department_id;
         $this->movement_reason = '';
         $this->movement_notes = '';
-        
+
         $this->showMovementForm = true;
     }
 
@@ -460,29 +743,33 @@ class StockManagement extends Component
         ]);
 
         $stock = Stock::find($this->selectedStockId);
-        
-        if (!$stock || !$stock->itemType) {
+
+        if (! $stock || ! $stock->itemType) {
             session()->flash('error', 'Stock must have an item type.');
+
             return;
         }
 
         // Check if movement type is allowed for this item type
-        if (!$stock->allowsMovementType($this->movement_type)) {
+        if (! $stock->allowsMovementType($this->movement_type)) {
             session()->flash('error', "Movement type '{$this->movement_type}' is not allowed for item type '{$stock->itemType->name}'.");
+
             return;
         }
 
         // Validate negative stock (hard block)
         $newQuantity = $stock->quantity + $this->movement_quantity;
-        if ($newQuantity < 0 && !$stock->canGoNegative()) {
-            session()->flash('error', 'Cannot create negative stock. Current quantity: ' . $stock->quantity);
+        if ($newQuantity < 0 && ! $stock->canGoNegative()) {
+            session()->flash('error', 'Cannot create negative stock. Current quantity: '.$stock->quantity);
+
             return;
         }
 
         // Validate TRANSFER requires both departments
         if ($this->movement_type === 'TRANSFER') {
-            if (!$this->from_department_id || !$this->to_department_id) {
+            if (! $this->from_department_id || ! $this->to_department_id) {
                 session()->flash('error', 'Transfer requires both source and destination departments.');
+
                 return;
             }
         }
@@ -540,17 +827,19 @@ class StockManagement extends Component
 
     public function deleteStock($stockId)
     {
-        if (!$this->canEditStockItems) {
+        if (! $this->canEditStockItems) {
             session()->flash('error', 'You do not have permission to delete stock items.');
+
             return;
         }
         $stock = Stock::find($stockId);
-        
+
         // Check if stock has movements
         $hasMovements = StockMovement::where('stock_id', $stockId)->exists();
-        
+
         if ($hasMovements) {
             session()->flash('error', 'Cannot delete stock that has movement history.');
+
             return;
         }
 
@@ -561,16 +850,31 @@ class StockManagement extends Component
 
     public function updatedFilterItemType()
     {
+        $this->focus = null;
+        $this->loadStocks();
+    }
+
+    public function updatedFilterStockType()
+    {
+        $this->focus = null;
+        $this->loadStocks();
+    }
+
+    public function updatedFilterInventoryCategory()
+    {
+        $this->focus = null;
         $this->loadStocks();
     }
 
     public function updatedFilterDepartment()
     {
+        $this->focus = null;
         $this->loadStocks();
     }
 
     public function updatedSearch()
     {
+        $this->focus = null;
         $this->loadStocks();
     }
 
@@ -578,12 +882,13 @@ class StockManagement extends Component
     {
         $this->selectedMainStockId = $mainStockId;
         $mainStock = Stock::with('stockLocation')->find($mainStockId);
-        
-        if (!$mainStock || !$mainStock->stockLocation || !$mainStock->stockLocation->is_main_location) {
+
+        if (! $mainStock || ! $mainStock->stockLocation || ! $mainStock->stockLocation->is_main_location) {
             session()->flash('error', 'Selected stock is not in a main location.');
+
             return;
         }
-        
+
         $this->transfer_quantity = 0;
         $this->transfer_notes = '';
         $this->selectedSubstockLocationId = null;
@@ -613,19 +918,22 @@ class StockManagement extends Component
         $mainStock = Stock::find($this->selectedMainStockId);
         $subLocation = StockLocation::find($this->selectedSubstockLocationId);
 
-        if (!$mainStock) {
+        if (! $mainStock) {
             session()->flash('error', 'Invalid main stock.');
+
             return;
         }
 
-        if (!$subLocation || !$subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stockLocation->id) {
+        if (! $subLocation || ! $subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stockLocation->id) {
             session()->flash('error', 'Selected sub-location does not belong to this main location.');
+
             return;
         }
 
         // Check if main stock has enough quantity
         if ($mainStock->current_stock < $this->transfer_quantity) {
-            session()->flash('error', 'Insufficient quantity in main stock. Available: ' . $mainStock->current_stock);
+            session()->flash('error', 'Insufficient quantity in main stock. Available: '.$mainStock->current_stock);
+
             return;
         }
 
@@ -635,11 +943,11 @@ class StockManagement extends Component
             ->where('item_type_id', $mainStock->item_type_id)
             ->first();
 
-        if (!$subStock) {
+        if (! $subStock) {
             // Create stock item in sub-location
             $subStock = Stock::create([
                 'name' => $mainStock->name,
-                'code' => $mainStock->code . '_' . $subLocation->code,
+                'code' => $mainStock->code.'_'.$subLocation->code,
                 'description' => $mainStock->description,
                 'use_barcode' => $mainStock->use_barcode,
                 'barcode' => null, // Different barcode for sub-location
@@ -677,7 +985,7 @@ class StockManagement extends Component
             'user_id' => Auth::id(),
             'shift_id' => $resolved['shift_id'],
             'business_date' => $resolved['business_date'],
-            'notes' => 'Transfer to sub-location: ' . $subLocation->name . '. ' . $this->transfer_notes,
+            'notes' => 'Transfer to sub-location: '.$subLocation->name.'. '.$this->transfer_notes,
         ]);
 
         // Create movement to sub-stock (IN)
@@ -692,7 +1000,7 @@ class StockManagement extends Component
             'user_id' => Auth::id(),
             'shift_id' => $resolved['shift_id'],
             'business_date' => $resolved['business_date'],
-            'notes' => 'Transfer from main location: ' . $mainStock->stockLocation->name . '. ' . $this->transfer_notes,
+            'notes' => 'Transfer from main location: '.$mainStock->stockLocation->name.'. '.$this->transfer_notes,
         ]);
 
         // Update quantities
@@ -734,12 +1042,13 @@ class StockManagement extends Component
     {
         $this->selectedSubstockId = $substockId;
         $substock = Stock::find($substockId);
-        
-        if (!$substock || !$substock->isSubstock()) {
+
+        if (! $substock || ! $substock->isSubstock()) {
             session()->flash('error', 'Selected stock is not a substock.');
+
             return;
         }
-        
+
         $this->external_transfer_type = 'client';
         $this->recipient_name = '';
         $this->recipient_details = '';
@@ -748,10 +1057,10 @@ class StockManagement extends Component
                 'stock_id' => null,
                 'quantity' => 0,
                 'unit_price' => 0,
-            ]
+            ],
         ];
         $this->external_transfer_total = 0;
-        
+
         $this->showExternalTransferForm = true;
     }
 
@@ -813,9 +1122,10 @@ class StockManagement extends Component
         ]);
 
         $substock = Stock::find($this->selectedSubstockId);
-        
-        if (!$substock || !$substock->isSubstock()) {
+
+        if (! $substock || ! $substock->isSubstock()) {
             session()->flash('error', 'Invalid substock.');
+
             return;
         }
 
@@ -823,25 +1133,27 @@ class StockManagement extends Component
         $items = [];
         $totalAmount = 0;
         $mainStock = Stock::find($substock->parent_stock_id);
-        
+
         foreach ($this->external_transfer_items as $item) {
             $stock = Stock::find($item['stock_id']);
-            
+
             // Check if stock belongs to the same parent stock (main stock)
-            if (!$stock || $stock->parent_stock_id != $substock->parent_stock_id) {
-                session()->flash('error', 'Item ' . ($stock->name ?? 'Unknown') . ' does not belong to this substock location.');
+            if (! $stock || $stock->parent_stock_id != $substock->parent_stock_id) {
+                session()->flash('error', 'Item '.($stock->name ?? 'Unknown').' does not belong to this substock location.');
+
                 return;
             }
-            
+
             // Check if substock has enough quantity
             if ($stock->quantity < $item['quantity']) {
-                session()->flash('error', 'Insufficient quantity for ' . $stock->name . '. Available: ' . $stock->quantity);
+                session()->flash('error', 'Insufficient quantity for '.$stock->name.'. Available: '.$stock->quantity);
+
                 return;
             }
-            
+
             $itemTotal = $item['quantity'] * $item['unit_price'];
             $totalAmount += $itemTotal;
-            
+
             $items[] = [
                 'stock_id' => $stock->id,
                 'stock_name' => $stock->name,
@@ -872,7 +1184,7 @@ class StockManagement extends Component
         // Create stock movements and update quantities
         foreach ($items as $item) {
             $stock = Stock::find($item['stock_id']);
-            
+
             // Create movement (OUT from substock)
             StockMovement::create([
                 'stock_id' => $stock->id,
@@ -884,9 +1196,9 @@ class StockManagement extends Component
                 'user_id' => Auth::id(),
                 'shift_id' => $resolved['shift_id'],
                 'business_date' => $resolved['business_date'],
-                'notes' => 'External transfer to ' . $this->external_transfer_type . ': ' . $this->recipient_name,
+                'notes' => 'External transfer to '.$this->external_transfer_type.': '.$this->recipient_name,
             ]);
-            
+
             // Update stock quantity
             $stock->quantity -= $item['quantity'];
             $stock->save();

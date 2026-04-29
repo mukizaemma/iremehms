@@ -22,6 +22,13 @@
         </div>
     @endif
 
+    @if($filter_stock_location_id && $filterStockLocationName)
+        <div class="alert alert-secondary d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3" role="status">
+            <span>Showing stock for location: <strong>{{ $filterStockLocationName }}</strong></span>
+            <button type="button" class="btn btn-sm btn-outline-dark shrink-0" wire:click="clearStockLocationFilter">Show all locations</button>
+        </div>
+    @endif
+
     <!-- Filters -->
     <div class="card mb-4">
         <div class="card-body">
@@ -32,15 +39,15 @@
                         <label for="search">Search by Name or Code</label>
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <div class="form-floating">
-                        <select class="form-select" id="filter_item_type" wire:model.live="filter_item_type">
-                            <option value="">All Item Types</option>
-                            @foreach($itemTypes as $itemType)
-                                <option value="{{ $itemType->id }}">{{ $itemType->name }}</option>
+                        <select class="form-select" id="filter_inventory_category" wire:model.live="filter_inventory_category">
+                            <option value="">All inventory categories</option>
+                            @foreach(\App\Enums\InventoryCategory::ordered() as $invCat)
+                                <option value="{{ $invCat->value }}">{{ $invCat->label() }}</option>
                             @endforeach
                         </select>
-                        <label for="filter_item_type">Item Type</label>
+                        <label for="filter_inventory_category">Inventory category</label>
                     </div>
                 </div>
                 <div class="col-md-3">
@@ -57,8 +64,65 @@
         </div>
     </div>
 
+    <!-- Short report (scoped to filters + stock type) -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+            <button type="button"
+                class="card h-100 w-100 text-start border-0 shadow-sm p-3 btn btn-light @if($focus === null && $summaryTotalItems > 0) border border-primary border-2 @endif"
+                wire:click="clearFocus"
+                @if($summaryTotalItems === 0) disabled @endif>
+                <div class="text-muted small">Items in stock</div>
+                <div class="fs-4 fw-semibold">{{ number_format($summaryTotalItems) }}</div>
+                <div class="small text-muted mt-1">All lines matching filters</div>
+            </button>
+        </div>
+        <div class="col-6 col-lg-3">
+            <button type="button"
+                class="card h-100 w-100 text-start border-0 shadow-sm p-3 btn btn-light @if($focus === 'low') border border-warning border-2 @endif"
+                wire:click="setFocus('low')"
+                @if($summaryLowCount === 0) disabled @endif>
+                <div class="text-muted small">Low stock</div>
+                <div class="fs-4 fw-semibold text-warning">{{ number_format($summaryLowCount) }}</div>
+                <div class="small text-muted mt-1">Below safety or reorder level</div>
+            </button>
+        </div>
+        <div class="col-6 col-lg-3">
+            <button type="button"
+                class="card h-100 w-100 text-start border-0 shadow-sm p-3 btn btn-light @if($focus === 'expired') border border-danger border-2 @endif"
+                wire:click="setFocus('expired')"
+                @if($summaryExpiredCount === 0) disabled @endif>
+                <div class="text-muted small">Expired (on hand)</div>
+                <div class="fs-4 fw-semibold text-danger">{{ number_format($summaryExpiredCount) }}</div>
+                <div class="small text-muted mt-1">Past expiry with quantity &gt; 0</div>
+            </button>
+        </div>
+        <div class="col-6 col-lg-3">
+            <button type="button"
+                class="card h-100 w-100 text-start border-0 shadow-sm p-3 btn btn-light"
+                wire:click="clearFocus"
+                @if($summaryTotalItems === 0) disabled @endif>
+                <div class="text-muted small">Total stock value</div>
+                <div class="fs-4 fw-semibold">{{ \App\Helpers\CurrencyHelper::format($summaryTotalValue) }}</div>
+                <div class="small text-muted mt-1">Qty × purchase price (filtered scope)</div>
+            </button>
+        </div>
+    </div>
+
+    @if($focus)
+        <div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3" role="status">
+            <span>
+                @if($focus === 'low')
+                    Showing <strong>low stock</strong> items only (below safety stock or at/below reorder level).
+                @else
+                    Showing <strong>expired</strong> lines with stock on hand (past expiry date).
+                @endif
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-secondary shrink-0" wire:click="clearFocus">Show all items</button>
+        </div>
+    @endif
+
     <!-- Stock List -->
-    <div class="card">
+    <div class="card" id="stock-table">
         <div class="card-body">
             @if(count($stocks) > 0)
                 <div class="table-responsive">
@@ -66,26 +130,27 @@
                         <thead>
                             <tr>
                                 <th>Name</th>
-                                <th>Item Type</th>
-                                <th>Department</th>
+                                <th>Inventory category</th>
+                                <th>Pack &amp; measure</th>
                                 <th>Stock Location</th>
-                                <th>Current Stock</th>
+                                <th>Current stock</th>
                                 <th>Expiry</th>
-                                <th>Unit Purchase Price</th>
-                                <th>Purchase Value</th>
+                                <th>purchase price </th>
+                                <th>Purchase value</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach($stocks as $stock)
                                 @php
+                                    // Base quantity in stock (authoritative). Purchase units are derived; avoid 2-decimal rounding that contradicts base × units/package.
                                     $qty = (float) ($stock['current_stock'] ?? $stock['quantity'] ?? 0);
                                     $pkgSize = isset($stock['package_size']) && $stock['package_size'] > 0 ? (float) $stock['package_size'] : 0;
                                     $pkgUnit = $stock['package_unit'] ?? '';
                                     $qtyUnit = $stock['qty_unit'] ?? $stock['unit'] ?? '';
                                     $pkgQty = $pkgSize > 0 ? $qty / $pkgSize : null;
                                     $purchasePrice = (float) ($stock['purchase_price'] ?? 0);
-                                    $purchaseValue = $qty * $purchasePrice;
+                                    $purchaseValue = round($qty * $purchasePrice, 2);
                                 @endphp
                                 <tr>
                                     <td>
@@ -95,10 +160,25 @@
                                         @endif
                                     </td>
                                     <td>
-                                        <span class="badge bg-info">{{ $stock['item_type']['name'] ?? 'N/A' }}</span>
+                                        @php
+                                            $ic = $stock['inventory_category'] ?? 'dry_goods';
+                                            $icEnum = \App\Enums\InventoryCategory::tryFrom($ic);
+                                        @endphp
+                                        <span class="badge bg-secondary">{{ $icEnum?->label() ?? $ic }}</span>
                                     </td>
-                                    <td>
-                                        <span class="text-muted">{{ $stock['department']['name'] ?? '—' }}</span>
+                                    <td class="small">
+                                        @if($pkgSize > 0 && $pkgUnit !== '')
+                                            <span class="d-block fw-semibold">{{ $pkgUnit }}</span>
+                                            @if($qtyUnit !== '')
+                                                <span class="text-muted">1 {{ $pkgUnit }} = {{ rtrim(rtrim(number_format($pkgSize, 4), '0'), '.') }} {{ $qtyUnit }}</span>
+                                            @else
+                                                <span class="text-muted">{{ rtrim(rtrim(number_format($pkgSize, 4), '0'), '.') }} units / {{ $pkgUnit }}</span>
+                                            @endif
+                                        @elseif($qtyUnit !== '')
+                                            <span class="text-muted">{{ $qtyUnit }}</span>
+                                        @else
+                                            <span class="text-muted">—</span>
+                                        @endif
                                     </td>
                                     <td>
                                         @if(isset($stock['stock_location']))
@@ -116,44 +196,65 @@
                                         @endphp
                                         <div class="d-flex flex-column gap-1">
                                             <span class="badge bg-{{ $isMain ? 'primary' : 'secondary' }} align-self-start">{{ $isMain ? 'Main' : 'Substock' }}</span>
-                                            @if($pkgSize > 0 && $pkgUnit)
-                                                <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
-                                                    <strong>Packages:</strong> {{ number_format($pkgQty, 2) }} {{ $pkgUnit }}
-                                                </span>
-                                                <span class="text-muted small">
-                                                    <strong>Converted:</strong> {{ number_format($qty, 2) }} {{ $qtyUnit }}
-                                                </span>
+                                            @if($isMain)
+                                                {{-- Main stock: show purchase/package units first; base qty is secondary (storage) --}}
+                                                @if($pkgSize > 0 && $pkgUnit !== '')
+                                                    <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
+                                                        <strong>On hand:</strong> {{ number_format($pkgQty, 4) }} {{ $pkgUnit }}
+                                                    </span>
+                                                    <span class="text-muted small d-block">
+                                                        {{ number_format($qty, 2) }} {{ $qtyUnit ?: '—' }} stored
+                                                    </span>
+                                                @else
+                                                    <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
+                                                        <strong>Quantity:</strong> {{ number_format($qty, 2) }} {{ $qtyUnit ?: '—' }}
+                                                    </span>
+                                                @endif
+                                                @if($substockTotal && ($substockTotal['base_qty'] > 0 || ($substockTotal['pkg_qty'] ?? 0) > 0))
+                                                    <hr class="my-1">
+                                                    <span class="small text-muted">
+                                                        <strong>In substocks:</strong>
+                                                        @if($substockTotal['pkg_size'] > 0 && ($substockTotal['pkg_unit'] ?? ''))
+                                                            {{ number_format($substockTotal['pkg_qty'], 4) }} {{ $substockTotal['pkg_unit'] }}
+                                                            <span class="text-muted">({{ number_format($substockTotal['base_qty'], 2) }} {{ $substockTotal['qty_unit'] ?: '—' }})</span>
+                                                        @else
+                                                            {{ number_format($substockTotal['base_qty'], 2) }} {{ $substockTotal['qty_unit'] ?: '—' }}
+                                                        @endif
+                                                    </span>
+                                                    @php
+                                                        $totalBase = $qty + $substockTotal['base_qty'];
+                                                    @endphp
+                                                    <span class="small">
+                                                        <strong>Total (main + substocks):</strong>
+                                                        @if($pkgSize > 0 && $pkgUnit !== '')
+                                                            {{ number_format($totalBase / $pkgSize, 4) }} {{ $pkgUnit }}
+                                                            <span class="text-muted">({{ number_format($totalBase, 2) }} {{ $qtyUnit ?: '—' }})</span>
+                                                        @else
+                                                            {{ number_format($totalBase, 2) }} {{ $qtyUnit ?: '—' }}
+                                                        @endif
+                                                    </span>
+                                                @endif
                                             @else
-                                                <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
-                                                    <strong>Quantity:</strong> {{ number_format($qty, 2) }} {{ $qtyUnit ?: '—' }}
-                                                </span>
-                                            @endif
-                                            @if($substockTotal && ($substockTotal['base_qty'] > 0 || ($substockTotal['pkg_qty'] ?? 0) > 0))
-                                                <hr class="my-1">
-                                                <span class="small text-muted">
-                                                    <strong>In substocks:</strong>
-                                                    @if($substockTotal['pkg_size'] > 0 && ($substockTotal['pkg_unit'] ?? ''))
-                                                        {{ number_format($substockTotal['pkg_qty'], 2) }} {{ $substockTotal['pkg_unit'] }}
-                                                        ({{ number_format($substockTotal['base_qty'], 2) }} {{ $substockTotal['qty_unit'] ?: '—' }})
-                                                    @else
-                                                        {{ number_format($substockTotal['base_qty'], 2) }} {{ $substockTotal['qty_unit'] ?: '—' }}
-                                                    @endif
-                                                </span>
-                                                @php
-                                                    $totalBase = $qty + $substockTotal['base_qty'];
-                                                    $totalPkg = ($pkgSize > 0) ? $totalBase / $pkgSize : null;
-                                                @endphp
-                                                <span class="small">
-                                                    <strong>Total available:</strong>
-                                                    @if($totalPkg !== null && $pkgUnit)
-                                                        {{ number_format($totalPkg, 2) }} {{ $pkgUnit }} ({{ number_format($totalBase, 2) }} {{ $qtyUnit ?: '—' }})
-                                                    @else
-                                                        {{ number_format($totalBase, 2) }} {{ $qtyUnit ?: '—' }}
-                                                    @endif
-                                                </span>
+                                                {{-- Substock: same as main — package units first when configured --}}
+                                                @if($pkgSize > 0 && $pkgUnit !== '')
+                                                    <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
+                                                        <strong>On hand:</strong> {{ number_format($pkgQty, 4) }} {{ $pkgUnit }}
+                                                    </span>
+                                                    <span class="text-muted small d-block">
+                                                        {{ number_format($qty, 2) }} {{ $qtyUnit ?: '—' }} stored
+                                                    </span>
+                                                @else
+                                                    <span class="{{ $qty < ($stock['safety_stock'] ?? 0) ? 'text-danger fw-bold' : '' }}">
+                                                        <strong>Quantity:</strong> {{ number_format($qty, 2) }} {{ $qtyUnit ?: '—' }}
+                                                    </span>
+                                                @endif
                                             @endif
                                             @if(isset($stock['safety_stock']) && $stock['safety_stock'] > 0)
-                                                <small class="text-muted">Safety: {{ number_format($stock['safety_stock'], 2) }}</small>
+                                                @if($pkgSize > 0 && $pkgUnit !== '')
+                                                    <small class="text-muted d-block">Safety: {{ number_format((float) $stock['safety_stock'] / $pkgSize, 4) }} {{ $pkgUnit }} ({{ number_format($stock['safety_stock'], 2) }} {{ $qtyUnit ?: '—' }})</small>
+                                                @else
+                                                    <small class="text-muted">Safety: {{ number_format($stock['safety_stock'], 2) }} {{ $qtyUnit ?: '' }}</small>
+                                                @endif
                                             @endif
                                         </div>
                                     </td>
@@ -166,36 +267,61 @@
                                     </td>
                                     <td>{{ $purchasePrice > 0 ? \App\Helpers\CurrencyHelper::format($purchasePrice) : '—' }}</td>
                                     <td>{{ $purchasePrice > 0 ? \App\Helpers\CurrencyHelper::format($purchaseValue) : '—' }}</td>
-                                    <td>
-                                        @if(isset($stock['stock_location']) && $stock['stock_location']['is_main_location'])
-                                            <a href="{{ route('stock.requests', ['action' => 'create', 'type' => 'transfer_substock', 'stock_id' => $stock['id']]) }}" class="btn btn-sm btn-primary" title="Request transfer to sub-location">
-                                                <i class="fa fa-paper-plane"></i> Request transfer
-                                            </a>
-                                            <a href="{{ route('stock.requests', ['action' => 'create', 'type' => 'issue_department']) }}" class="btn btn-sm btn-outline-primary" title="Request issue to department">
-                                                <i class="fa fa-external-link-alt"></i> Request issue
-                                            </a>
-                                            @if($canAuthorizeStockRequests)
-                                                <button class="btn btn-sm btn-secondary" wire:click="openMainToSubstockTransfer({{ $stock['id'] }})" title="Transfer now (authorizer)">
-                                                    <i class="fa fa-arrow-right"></i> Transfer now
-                                                </button>
-                                            @endif
-                                        @endif
-                                        @if($canEditStockItems)
-                                            <a href="{{ route('stock.requests', ['action' => 'create', 'type' => 'item_edit', 'stock_id' => $stock['id']]) }}" class="btn btn-sm btn-outline-info" title="Request item edit">
-                                                <i class="fa fa-edit"></i> Request edit
-                                            </a>
-                                            <button class="btn btn-sm btn-info" wire:click="openStockForm({{ $stock['id'] }})" title="Edit">
-                                                <i class="fa fa-edit"></i>
+                                    <td class="align-middle text-nowrap">
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="stockActions{{ $stock['id'] }}" data-bs-toggle="dropdown" data-bs-auto-close="true" aria-expanded="false" aria-haspopup="true">
+                                                Actions
                                             </button>
-                                        @endif
-                                        <button class="btn btn-sm btn-success" wire:click="openMovementForm({{ $stock['id'] }})" title="Record Movement">
-                                            <i class="fa fa-exchange-alt"></i>
-                                        </button>
-                                        @if($canEditStockItems)
-                                            <button class="btn btn-sm btn-danger" wire:click="deleteStock({{ $stock['id'] }})" title="Delete" onclick="return confirm('Are you sure?')">
-                                                <i class="fa fa-trash"></i>
-                                            </button>
-                                        @endif
+                                            <ul class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="stockActions{{ $stock['id'] }}">
+                                                @if(isset($stock['stock_location']) && $stock['stock_location']['is_main_location'])
+                                                    <li>
+                                                        <a class="dropdown-item" href="{{ route('stock.requests', ['action' => 'create', 'type' => 'transfer_substock', 'stock_id' => $stock['id']]) }}">
+                                                            <i class="fa fa-paper-plane fa-fw me-1 text-primary"></i> Request transfer
+                                                        </a>
+                                                    </li>
+                                                    <li>
+                                                        <a class="dropdown-item" href="{{ route('stock.requests', ['action' => 'create', 'type' => 'issue_department']) }}">
+                                                            <i class="fa fa-external-link-alt fa-fw me-1 text-primary"></i> Request issue
+                                                        </a>
+                                                    </li>
+                                                    @if($canAuthorizeStockRequests)
+                                                        <li>
+                                                            <button type="button" class="dropdown-item" wire:click="openMainToSubstockTransfer({{ $stock['id'] }})">
+                                                                <i class="fa fa-arrow-right fa-fw me-1"></i> Transfer now
+                                                            </button>
+                                                        </li>
+                                                    @endif
+                                                    @if($canEditStockItems || $canAuthorizeStockRequests)
+                                                        <li><hr class="dropdown-divider"></li>
+                                                    @endif
+                                                @endif
+                                                @if($canEditStockItems)
+                                                    <li>
+                                                        <a class="dropdown-item" href="{{ route('stock.requests', ['action' => 'create', 'type' => 'item_edit', 'stock_id' => $stock['id']]) }}">
+                                                            <i class="fa fa-clipboard fa-fw me-1"></i> Request edit
+                                                        </a>
+                                                    </li>
+                                                    <li>
+                                                        <button type="button" class="dropdown-item" wire:click="openStockForm({{ $stock['id'] }})">
+                                                            <i class="fa fa-edit fa-fw me-1"></i> Edit item
+                                                        </button>
+                                                    </li>
+                                                @endif
+                                                <li>
+                                                    <button type="button" class="dropdown-item" wire:click="openMovementForm({{ $stock['id'] }})">
+                                                        <i class="fa fa-exchange-alt fa-fw me-1 text-success"></i> Record movement
+                                                    </button>
+                                                </li>
+                                                @if($canEditStockItems)
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li>
+                                                        <button type="button" class="dropdown-item text-danger" wire:click="deleteStock({{ $stock['id'] }})" wire:confirm="Are you sure you want to delete this stock item?">
+                                                            <i class="fa fa-trash fa-fw me-1"></i> Delete
+                                                        </button>
+                                                    </li>
+                                                @endif
+                                            </ul>
+                                        </div>
                                     </td>
                                 </tr>
                             @endforeach
@@ -203,7 +329,19 @@
                     </table>
                 </div>
             @else
-                <p class="text-muted text-center py-4">No stock items found. Click "Add Stock Item" to create one.</p>
+                <div class="text-center text-muted py-4">
+                    <p class="mb-2">No stock items match the current filters@if($focus) for this view@endif.</p>
+                    @if($focus)
+                        <p class="small mb-2">Nothing in this drill-down right now. <button type="button" class="btn btn-link btn-sm p-0 align-baseline" wire:click="clearFocus">Show all items</button></p>
+                    @endif
+                    @if($filter_stock_type === 'main')
+                        <p class="small mb-0">If you just added an item in a <strong>sub-stock</strong> location, set <strong>Stock Type</strong> to <strong>All Types</strong> or <strong>Substocks</strong>. Main stock rows only show items stored in a <strong>main</strong> location.</p>
+                    @elseif($filter_stock_type === 'substock')
+                        <p class="small mb-0">Try <strong>All Types</strong> or <strong>Main Stocks</strong>, or clear the search.</p>
+                    @else
+                        <p class="small mb-0">Clear the search box or change item type, or add a stock item.</p>
+                    @endif
+                </div>
             @endif
         </div>
     </div>
@@ -257,24 +395,23 @@
                                 @endif
                             </div>
 
-                            <!-- Item Type -->
                             <div class="form-floating mb-3">
-                                <select class="form-select @error('item_type_id') is-invalid @enderror" id="item_type_id" wire:model.defer="item_type_id" required>
-                                    <option value="">Select Item Type</option>
-                                    @foreach($itemTypes as $itemType)
-                                        <option value="{{ $itemType->id }}">{{ $itemType->name }}</option>
+                                <select class="form-select @error('inventory_category') is-invalid @enderror" id="inventory_category" wire:model.defer="inventory_category" required>
+                                    @foreach(\App\Enums\InventoryCategory::ordered() as $invCat)
+                                        <option value="{{ $invCat->value }}">{{ $invCat->label() }}</option>
                                     @endforeach
                                 </select>
-                                <label for="item_type_id">Item Type <span class="text-danger">*</span></label>
-                                @error('item_type_id') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                <small class="text-muted">Assets, Expenses, Finished Product, Raw Material, Service</small>
+                                <label for="inventory_category">Inventory category <span class="text-danger">*</span></label>
+                                @error('inventory_category') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                <small class="text-muted">Used for daily stock summary reports (Dry Goods, Beverage, etc.).</small>
                             </div>
 
                             <!-- Units & Conversions -->
                             <div class="alert alert-info py-2 mb-3">
                                 <i class="fa fa-info-circle me-2"></i>
                                 <strong>How units work:</strong>
-                                New items are stored first in <strong>main stock</strong>. Remaining quantity is shown in the <strong>purchase unit</strong> and <strong>units per package</strong> (e.g. 24 bottles per case). These same units are used for <strong>sale</strong> and for the <strong>opening/closing report</strong> in Restaurant/POS. The value for main stock is the <strong>purchase cost</strong> to keep a real record of purchased items. You can add items here without having physical stock yet—update the quantity later when stock is received.
+                                Set <strong>package unit</strong>, <strong>units per package</strong>, and <strong>measure (qty unit)</strong> so the stock list can show <strong>on hand in packages</strong> (e.g. cases) and the pack definition (e.g. 1 case = 24 bottles). Quantities are still stored in the system as base units for transfers and valuation.
+                                <strong>Purchase price</strong> is per base (measure) unit. Menu selling prices are set on menu items in Restaurant/POS.
                             </div>
 
                             <!-- Package Unit, Units per Package, and Qty Unit -->
@@ -282,7 +419,7 @@
                                 <div class="col-md-4">
                                     <div class="form-floating">
                                         <select class="form-select" id="package_unit" wire:model.defer="package_unit">
-                                            <option value="">Select Package Unit</option>
+                                            <option value="">Select package unit</option>
                                             <option value="Box">Box</option>
                                             <option value="Carton">Carton</option>
                                             <option value="Pack">Pack</option>
@@ -296,21 +433,22 @@
                                             <option value="Tube">Tube</option>
                                             <option value="Other">Other</option>
                                         </select>
-                                        <label for="package_unit">Package Unit (Purchase Unit)</label>
+                                        <label for="package_unit">Package unit (how you buy)</label>
                                     </div>
+                                    <small class="text-muted d-block mt-1">Supplier or wholesale unit (case, carton). This is <strong>not</strong> the unit used for on-hand stock.</small>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-floating">
                                         <input type="number" class="form-control @error('package_size') is-invalid @enderror" id="package_size" wire:model.defer="package_size" min="0" step="0.0001">
-                                        <label for="package_size">Units per Package</label>
+                                        <label for="package_size">Units per package</label>
                                         @error('package_size') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                        <small class="text-muted">e.g. 24 bottles in a case. Used for sale and for Restaurant/POS opening/closing report.</small>
                                     </div>
+                                    <small class="text-muted d-block mt-1">Number of <strong>base units</strong> in one purchase unit (e.g. 24 = one case holds 24 bottles). Used only to convert purchase-unit entry into stored quantity.</small>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-floating">
                                         <select class="form-select" id="qty_unit" wire:model.defer="qty_unit">
-                                            <option value="">Select Qty Unit (Base Unit)</option>
+                                            <option value="">Select measure unit</option>
                                             <option value="pcs">pcs - Pieces</option>
                                             <option value="kg">kg - Kilograms</option>
                                             <option value="g">g - Grams</option>
@@ -340,9 +478,9 @@
                                             <option value="pound">pound - Pound</option>
                                             <option value="ton">ton - Ton</option>
                                         </select>
-                                        <label for="qty_unit">Qty Unit (Base Unit in Stock)</label>
-                                        <small class="text-muted">This is the unit used to store stock, deduct via BoM, and sell in POS (e.g. bottle, kg).</small>
+                                        <label for="qty_unit">Measure unit (per package / stored qty)</label>
                                     </div>
+                                    <small class="text-muted d-block mt-1">The unit each package contains (e.g. bottles) and the unit stored for movements and valuation. The list shows <strong>packages</strong> on hand when package settings are set.</small>
                                 </div>
                             </div>
 
@@ -353,7 +491,7 @@
                                         <input type="number" class="form-control @error('purchase_price') is-invalid @enderror" id="purchase_price" wire:model.defer="purchase_price" min="0" step="0.01" required>
                                         <label for="purchase_price">Purchase Price <span class="text-danger">*</span></label>
                                         @error('purchase_price') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                        <small class="text-muted">Used for main stock value (real purchase cost).</small>
+                                        <small class="text-muted">Per <strong>base unit</strong> (qty unit below). Stock value = current base quantity × this price.</small>
                                     </div>
                                 </div>
                                 <div class="col-md-6">
@@ -368,31 +506,79 @@
                                 </div>
                             </div>
 
-                            <!-- Stock Quantities: Items can be added without physical stock; update qty later. -->
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-4">
-                                    <div class="form-floating">
-                                        <input type="number" class="form-control @error('beginning_stock_qty') is-invalid @enderror" id="beginning_stock_qty" wire:model.defer="beginning_stock_qty" min="0" step="0.01" required>
-                                        <label for="beginning_stock_qty">Beginning Stock Qty <span class="text-danger">*</span></label>
-                                        @error('beginning_stock_qty') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                            <!-- Stock Quantities: in purchase units (e.g. cases) when package is set; stored as base units (e.g. bottles). -->
+                            @php
+                                $__pkg = (float) ($package_size ?? 0);
+                                $__usePurchaseQty = $__pkg > 0 && ! empty($package_unit);
+                            @endphp
+                            @if($__usePurchaseQty)
+                                <div class="alert alert-secondary py-2 small mb-3">
+                                    <strong>Quantities in {{ $package_unit }}s.</strong> The system stores stock in <strong>base units</strong> ({{ $qty_unit ?: 'base unit' }}): {{ $__pkg }} {{ $qty_unit ?: 'units' }} per {{ $package_unit }} → multiply before save.
+                                </div>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('beginning_stock_purchase') is-invalid @enderror" id="beginning_stock_purchase" wire:model.live="beginning_stock_purchase" min="0" step="0.0001" required>
+                                            <label for="beginning_stock_purchase">Beginning ({{ $package_unit }}s) <span class="text-danger">*</span></label>
+                                            @error('beginning_stock_purchase') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('current_stock_purchase') is-invalid @enderror" id="current_stock_purchase" wire:model.live="current_stock_purchase" min="0" step="0.0001" required>
+                                            <label for="current_stock_purchase">Current ({{ $package_unit }}s) <span class="text-danger">*</span></label>
+                                            @error('current_stock_purchase') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                            <small class="text-muted">e.g. 5 cases × {{ $__pkg }} {{ $qty_unit ?: 'units' }}/{{ $package_unit }} = {{ number_format((float) ($current_stock_purchase ?? 0) * $__pkg, 2) }} {{ $qty_unit }} on hand.</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('safety_stock_purchase') is-invalid @enderror" id="safety_stock_purchase" wire:model.live="safety_stock_purchase" min="0" step="0.0001">
+                                            <label for="safety_stock_purchase">Safety ({{ $package_unit }}s)</label>
+                                            @error('safety_stock_purchase') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="col-md-4">
-                                    <div class="form-floating">
-                                        <input type="number" class="form-control @error('current_stock') is-invalid @enderror" id="current_stock" wire:model.defer="current_stock" min="0" step="0.01" required>
-                                        <label for="current_stock">Current Stock <span class="text-danger">*</span></label>
-                                        @error('current_stock') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                                        <small class="text-muted">You can set 0 and update when stock is received.</small>
+                                <div class="row g-3 mb-3">
+                                    <div class="col-12">
+                                        <div class="card bg-light border-0">
+                                            <div class="card-body py-2 small">
+                                                <strong class="d-block mb-1">Saved in database (base units)</strong>
+                                                <span class="text-muted">Beginning:</span> {{ number_format((float) ($beginning_stock_purchase ?? 0) * $__pkg, 2) }} {{ $qty_unit ?: '—' }}
+                                                &nbsp;·&nbsp;
+                                                <span class="text-muted">Current:</span> {{ number_format((float) ($current_stock_purchase ?? 0) * $__pkg, 2) }} {{ $qty_unit ?: '—' }}
+                                                &nbsp;·&nbsp;
+                                                <span class="text-muted">Safety:</span> {{ number_format((float) ($safety_stock_purchase ?? 0) * $__pkg, 2) }} {{ $qty_unit ?: '—' }}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="col-md-4">
-                                    <div class="form-floating">
-                                        <input type="number" class="form-control @error('safety_stock') is-invalid @enderror" id="safety_stock" wire:model.defer="safety_stock" min="0" step="0.01">
-                                        <label for="safety_stock">Safety Stock</label>
-                                        @error('safety_stock') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                            @else
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('beginning_stock_qty') is-invalid @enderror" id="beginning_stock_qty" wire:model.defer="beginning_stock_qty" min="0" step="0.01" required>
+                                            <label for="beginning_stock_qty">Beginning stock (base unit) <span class="text-danger">*</span></label>
+                                            @error('beginning_stock_qty') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('current_stock') is-invalid @enderror" id="current_stock" wire:model.defer="current_stock" min="0" step="0.01" required>
+                                            <label for="current_stock">Current stock (base unit) <span class="text-danger">*</span></label>
+                                            @error('current_stock') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                            <small class="text-muted">Set package unit + units per package above to enter cases/cartons instead.</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-floating">
+                                            <input type="number" class="form-control @error('safety_stock') is-invalid @enderror" id="safety_stock" wire:model.defer="safety_stock" min="0" step="0.01">
+                                            <label for="safety_stock">Safety stock (base unit)</label>
+                                            @error('safety_stock') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            @endif
 
                             <!-- Expiration: show date only when Use expiration is checked -->
                             <div class="row g-3 mb-3">
@@ -476,9 +662,21 @@
                             @endphp
 
                             @if($selectedStock)
+                                @php
+                                    $__mQty = (float) ($selectedStock['current_stock'] ?? $selectedStock['quantity'] ?? 0);
+                                    $__mPkg = isset($selectedStock['package_size']) && $selectedStock['package_size'] > 0 ? (float) $selectedStock['package_size'] : 0;
+                                    $__mPkgUnit = $selectedStock['package_unit'] ?? '';
+                                    $__mQtyUnit = $selectedStock['qty_unit'] ?? $selectedStock['unit'] ?? '';
+                                    $__mPkgQty = $__mPkg > 0 ? $__mQty / $__mPkg : null;
+                                @endphp
                                 <div class="alert alert-info">
                                     <strong>Stock Item:</strong> {{ $selectedStock['name'] }}<br>
-                                    <strong>Current Quantity:</strong> {{ number_format($selectedStock['quantity'], 2) }} {{ $selectedStock['unit'] ?? '' }}<br>
+                                    @if($__mPkg > 0 && $__mPkgUnit !== '')
+                                        <strong>On hand:</strong> {{ number_format($__mPkgQty, 4) }} {{ $__mPkgUnit }}
+                                        <span class="text-muted">({{ number_format($__mQty, 2) }} {{ $__mQtyUnit ?: '—' }} stored)</span><br>
+                                    @else
+                                        <strong>Current Quantity:</strong> {{ number_format($__mQty, 2) }} {{ $__mQtyUnit ?: '—' }}<br>
+                                    @endif
                                     <strong>Item Type:</strong> {{ $selectedStock['item_type']['name'] ?? 'N/A' }}
                                 </div>
                             @endif

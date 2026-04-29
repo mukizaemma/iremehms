@@ -4,6 +4,9 @@
         <h5 class="mb-0">Stock Requests</h5>
         <div class="d-flex gap-2">
             <a href="{{ route('stock.management') }}" class="btn btn-secondary btn-sm"><i class="fa fa-arrow-left me-2"></i>Manage stock</a>
+            @if($isStoreKeeper || $canEditStockItems)
+                <a href="{{ route('stock.out') }}" class="btn btn-outline-primary btn-sm"><i class="fa fa-dolly me-2"></i>Go to Stock out (issue approved)</a>
+            @endif
             <button class="btn btn-primary btn-sm" wire:click="openCreateForm()">
                 <i class="fa fa-plus me-2"></i>New request
             </button>
@@ -25,24 +28,41 @@
 
     <div class="alert alert-info small">
         <i class="fa fa-info-circle me-2"></i>
-        Transfers to sub-locations, issues to departments, and item edits are done by <strong>request</strong>. You can add multiple items to one request. A user with permission to authorize stock requests will approve or reject it.
+        <strong>Stock requests</strong> are <em>not</em> for buying from suppliers — use
+        <a href="{{ route('purchase.requisitions') }}" class="fw-semibold">Purchase requisitions</a> for new purchases.
+        <span class="d-block mt-2"><strong>What you can request here:</strong></span>
+        <ul class="mb-1 mt-1 ps-3">
+            <li><strong>Transfers</strong> — move stock between <strong>main</strong> and <strong>sub-locations</strong> (or department transfer type).</li>
+            <li><strong>Issues</strong> — draw from <strong>main stock</strong> to a <strong>department</strong> (including Bar &amp; Restaurant).</li>
+        </ul>
+        <span class="d-block mt-1"><strong>Change or cancel (pending only):</strong> open your request → <strong>Edit request</strong>, or <strong>Request deletion</strong> (Super Admin confirms removal).</span>
+        <span class="d-block mt-1">Items with a <strong>package unit</strong> can be entered in <strong>packages</strong>; the form shows <strong>base units</strong> for what is issued from main stock.</span>
+        @if($isStoreKeeper || $canEditStockItems)
+            <span class="d-block mt-1">
+                <strong>After approval:</strong> record physical <strong>issues</strong> on
+                <a href="{{ route('stock.out') }}" class="fw-semibold">Stock out</a>. Inbound purchased goods: <a href="{{ route('goods.receipts') }}" class="fw-semibold">Goods receipts</a>.
+            </span>
+        @endif
         @if($this->authorizers->isNotEmpty())
             <span class="d-block mt-1 text-muted">Authorizers: {{ $this->authorizers->pluck('name')->join(', ') }}</span>
+        @endif
+        @if(auth()->user()?->hasPermission('stock_audit') || auth()->user()?->canNavigateModules() || auth()->user()?->hasPermission('reports_view_all'))
+            <span class="d-block mt-1 small"><a href="{{ route('activity-log') }}" class="fw-semibold">Activity log</a> (filter by Stock / Store) lists approvals, issues, and related actions.</span>
         @endif
     </div>
 
     <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <a class="nav-link {{ $tab === 'my_requests' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'my_requests')">My requests</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {{ $tab === 'create' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'create')">{{ $isRestaurantManagerOnly ? 'New Bar & Restaurant requisition' : 'New request' }}</a>
+        </li>
         @if($canSeeAllRequests && !$isRestaurantManagerOnly)
             <li class="nav-item">
                 <a class="nav-link {{ $tab === 'all_requests' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'all_requests')">All requests</a>
             </li>
         @endif
-        <li class="nav-item">
-            <a class="nav-link {{ $tab === 'create' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'create')">{{ $isRestaurantManagerOnly ? 'New Bar & Restaurant requisition' : 'New request' }}</a>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link {{ $tab === 'my_requests' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'my_requests')">My requests</a>
-        </li>
         @if(($canAuthorize || $canAuthorizeBarRestaurant) && !$isRestaurantManagerOnly)
             <li class="nav-item">
                 <a class="nav-link {{ $tab === 'pending' ? 'active' : '' }}" href="#" wire:click="$set('tab', 'pending')">Pending approval</a>
@@ -50,11 +70,27 @@
         @endif
     </ul>
 
+    <div class="row g-2 mb-3">
+        <div class="col-md-4">
+            <label class="form-label small text-muted mb-0">Inventory category (for item picker)</label>
+            <select class="form-select form-select-sm" wire:model.live="filter_inventory_category">
+                <option value="">All categories</option>
+                @foreach(\App\Enums\InventoryCategory::ordered() as $invCat)
+                    <option value="{{ $invCat->value }}">{{ $invCat->label() }}</option>
+                @endforeach
+            </select>
+        </div>
+    </div>
+
     @if($tab === 'my_requests')
         <div class="card">
+            <div class="card-header py-2">
+                <h6 class="mb-0">Your recent requests</h6>
+                <small class="text-muted">Newest first — open a row for details.</small>
+            </div>
             <div class="card-body">
                 @if($this->myRequests->isEmpty())
-                    <p class="text-muted text-center py-4 mb-0">You have not submitted any requests yet.</p>
+                    <p class="text-muted text-center py-4 mb-0">You have not submitted any requests yet. Use <strong>New request</strong> to create one.</p>
                 @else
                     <div class="table-responsive">
                         <table class="table table-hover">
@@ -62,6 +98,7 @@
                                 <tr>
                                     <th>Type</th>
                                     <th>Status</th>
+                                    <th>Next step</th>
                                     <th>Items</th>
                                     <th>Date</th>
                                     <th>Approved/Rejected by</th>
@@ -74,6 +111,7 @@
                                         <td>
                                             <span class="badge bg-{{ $req->status === 'pending' ? 'warning' : ($req->status === 'approved' ? 'success' : 'danger') }}">{{ ucfirst($req->status) }}</span>
                                         </td>
+                                        <td><span class="badge bg-{{ $req->fulfillmentBadgeClass() }}">{{ $req->fulfillmentLabel() }}</span></td>
                                         <td>{{ $req->items->count() }} item(s)</td>
                                         <td>{{ $req->created_at->format('M j, Y H:i') }}</td>
                                         <td>
@@ -108,6 +146,7 @@
                                 <tr>
                                     <th>Type</th>
                                     <th>Requested by</th>
+                                    <th>Next step</th>
                                     <th>Items</th>
                                     <th>Date</th>
                                     <th>Actions</th>
@@ -119,9 +158,20 @@
                                     <tr role="button" tabindex="0" class="cursor-pointer" wire:click="viewRequest({{ $req->id }})" wire:key="pend-req-{{ $req->id }}">
                                         <td>{{ \App\Models\StockRequest::typeLabels()[$req->type] ?? $req->type }}</td>
                                         <td>{{ $req->requestedBy->name ?? '—' }}</td>
+                                        <td><span class="badge bg-{{ $req->fulfillmentBadgeClass() }}">{{ $req->fulfillmentLabel() }}</span></td>
                                         <td>
                                             @foreach($req->items as $it)
-                                                <span class="d-block small">{{ $it->stock->name ?? 'N/A' }}: {{ $it->quantity }}</span>
+                                                @php
+                                                    $st = $it->stock;
+                                                    $qDisp = number_format($it->quantity, 2).' '.($st->qty_unit ?? $st->unit ?? '');
+                                                    if ($st && $this->stockUsesPackages($st)) {
+                                                        $pk = (float) ($st->package_size ?? 0);
+                                                        if ($pk > 0) {
+                                                            $qDisp = number_format($it->quantity / $pk, 4).' '.$st->package_unit.' (≈ '.$qDisp.')';
+                                                        }
+                                                    }
+                                                @endphp
+                                                <span class="d-block small">{{ $it->stock->name ?? 'N/A' }}: {{ $qDisp }}</span>
                                             @endforeach
                                         </td>
                                         <td>{{ $req->created_at->format('M j, Y H:i') }}</td>
@@ -177,6 +227,7 @@
                                     <th>Type</th>
                                     <th>Requested by</th>
                                     <th>Status</th>
+                                    <th>Next step</th>
                                     <th>To location / department</th>
                                     <th>Items</th>
                                     <th>Date</th>
@@ -197,6 +248,7 @@
                                                 <span class="badge bg-dark ms-1" title="Deletion requested">Deletion requested</span>
                                             @endif
                                         </td>
+                                        <td><span class="badge bg-{{ $req->fulfillmentBadgeClass() }}">{{ $req->fulfillmentLabel() }}</span></td>
                                         <td>
                                             @if($req->toStockLocation)
                                                 {{ $req->toStockLocation->name }}
@@ -259,7 +311,7 @@
                                     <label class="form-label">Request type</label>
                                     <select class="form-select" wire:model.live="request_type">
                                         @foreach(\App\Models\StockRequest::typeLabels() as $value => $label)
-                                            @if($value !== 'item_edit' || $canEditStockItems)
+                                            @if($value !== 'item_edit')
                                                 <option value="{{ $value }}">{{ $label }}</option>
                                             @endif
                                         @endforeach
@@ -269,12 +321,13 @@
                             @if($request_type === 'transfer_substock')
                                 <div class="mb-3">
                                     <label class="form-label">To sub-location (default)</label>
-                                    <select class="form-select" wire:model="to_stock_location_id">
+                                    <select class="form-select" wire:model.live="to_stock_location_id">
                                         <option value="">Select sub-location</option>
                                         @foreach($stockLocations->where('is_main_location', false) as $loc)
                                             <option value="{{ $loc->id }}">{{ $loc->name }} ({{ $loc->code }})</option>
                                         @endforeach
                                     </select>
+                                    <small class="text-muted d-block mt-1">Stock is issued from <strong>main</strong> in base units; enter quantities in <strong>packages</strong> when the item is set up with units per package.</small>
                                 </div>
                             @endif
                             @if(in_array($request_type, ['transfer_department', 'issue_department', 'issue_bar_restaurant']))
@@ -297,8 +350,9 @@
                                     <thead>
                                         <tr>
                                             <th>Stock item</th>
-                                            @if($request_type !== 'item_edit')
-                                                <th>Quantity</th>
+                                            <th>Quantity</th>
+                                            @if($request_type === 'transfer_substock')
+                                                <th>Levels (main / sub)</th>
                                             @endif
                                             @if($request_type === 'transfer_substock')
                                                 <th>To sub-location (optional)</th>
@@ -313,21 +367,74 @@
                                         @foreach($request_items as $idx => $item)
                                             <tr wire:key="req-item-{{ $idx }}">
                                                 <td>
-                                                    <select class="form-select form-select-sm" wire:model="request_items.{{ $idx }}.stock_id" required>
+                                                    <select class="form-select form-select-sm" wire:model.live="request_items.{{ $idx }}.stock_id" required>
                                                         <option value="">Select item</option>
                                                         @foreach($mainStocks as $s)
-                                                            <option value="{{ $s->id }}">{{ $s->name }} ({{ $s->stockLocation->name ?? '' }})</option>
+                                                            @php
+                                                                $invCat = \App\Enums\InventoryCategory::tryFrom((string) ($s->inventory_category ?? ''));
+                                                                $invLabel = $invCat?->label() ?? 'Uncategorized';
+                                                                $uom = $s->qty_unit ?? $s->unit ?? '';
+                                                            @endphp
+                                                            <option value="{{ $s->id }}">{{ $s->name }} — {{ $invLabel }}{{ $uom ? ' · '.$uom : '' }} ({{ $s->stockLocation->name ?? '' }})</option>
                                                         @endforeach
                                                     </select>
                                                 </td>
-                                                @if($request_type !== 'item_edit')
-                                                    <td>
+                                                @php
+                                                    $selStock = $mainStocks->firstWhere('id', (int) ($item['stock_id'] ?? 0));
+                                                    $usesPkg = $selStock && $this->stockUsesPackages($selStock);
+                                                @endphp
+                                                <td>
+                                                    @if($usesPkg)
+                                                        <label class="form-label small text-muted mb-0">Packages ({{ $selStock->package_unit }})</label>
+                                                        <input type="number" step="0.0001" min="0" class="form-control form-control-sm" wire:model.live="request_items.{{ $idx }}.quantity_packages" placeholder="e.g. 2">
+                                                        @php
+                                                            $qp = (float) ($item['quantity_packages'] ?? 0);
+                                                            $pkg = (float) ($selStock->package_size ?? 0);
+                                                            $base = ($qp > 0 && $pkg > 0) ? $qp * $pkg : 0;
+                                                        @endphp
+                                                        @if($qp > 0 && $pkg > 0)
+                                                            <small class="text-muted d-block mt-1">Base (issue / sale): <strong>{{ number_format($base, 2) }}</strong> {{ $selStock->qty_unit ?? $selStock->unit ?? '' }}</small>
+                                                        @endif
+                                                    @else
+                                                        <label class="form-label small text-muted mb-0">Base quantity</label>
                                                         <input type="number" step="0.01" min="0.01" class="form-control form-control-sm" wire:model="request_items.{{ $idx }}.quantity" placeholder="Qty">
+                                                        @if($selStock)
+                                                            <small class="text-muted d-block mt-1">{{ $selStock->qty_unit ?? $selStock->unit ?? 'units' }}</small>
+                                                        @endif
+                                                    @endif
+                                                </td>
+                                                @if($request_type === 'transfer_substock')
+                                                    @php
+                                                        $rowToLoc = $item['to_stock_location_id'] ?? '';
+                                                        $defLoc = $rowToLoc !== '' && $rowToLoc !== null ? $rowToLoc : $to_stock_location_id;
+                                                        $hint = $this->stockAvailabilityHint($item['stock_id'] ?? null, $rowToLoc !== '' ? $rowToLoc : null, $to_stock_location_id);
+                                                    @endphp
+                                                    <td class="small text-muted">
+                                                        @if($hint)
+                                                            <div>Main: <strong>{{ number_format($hint['main_base'], 2) }}</strong> {{ $hint['qty_unit'] ?: '—' }}
+                                                                @if($hint['uses_packages'] && $hint['main_pkg'] !== null)
+                                                                    <span class="d-block">(≈ {{ number_format($hint['main_pkg'], 4) }} {{ $hint['pkg_unit'] }})</span>
+                                                                @endif
+                                                            </div>
+                                                            @if($defLoc && $hint['sub_base'] !== null)
+                                                                <div class="mt-1">Sub: <strong>{{ number_format($hint['sub_base'], 2) }}</strong> {{ $hint['qty_unit'] ?: '—' }}
+                                                                    @if($hint['uses_packages'] && $hint['sub_pkg'] !== null)
+                                                                        <span class="d-block">(≈ {{ number_format($hint['sub_pkg'], 4) }} {{ $hint['pkg_unit'] }})</span>
+                                                                    @endif
+                                                                </div>
+                                                            @elseif($defLoc)
+                                                                <div class="mt-1 text-muted">Sub: no line yet (0)</div>
+                                                            @else
+                                                                <div class="mt-1">Pick sub-location to see substock level.</div>
+                                                            @endif
+                                                        @else
+                                                            —
+                                                        @endif
                                                     </td>
                                                 @endif
                                                 @if($request_type === 'transfer_substock')
                                                     <td>
-                                                        <select class="form-select form-select-sm" wire:model="request_items.{{ $idx }}.to_stock_location_id">
+                                                        <select class="form-select form-select-sm" wire:model.live="request_items.{{ $idx }}.to_stock_location_id">
                                                             <option value="">Same as above</option>
                                                             @foreach($stockLocations->where('is_main_location', false) as $loc)
                                                                 <option value="{{ $loc->id }}">{{ $loc->name }}</option>
@@ -391,6 +498,13 @@
                         @if($req->notes)
                             <p class="mb-3"><strong>Notes:</strong> {{ $req->notes }}</p>
                         @endif
+                        @if($req->status === 'approved' && $req->type !== 'item_edit' && $req->items->contains(fn ($i) => $i->isPendingIssue()))
+                            <div class="alert alert-primary py-2 small mb-3" role="status">
+                                <strong>Issue stock:</strong> This request is approved but not fully issued. Open
+                                <a href="{{ route('stock.out') }}" class="alert-link">Stock out</a>
+                                to confirm each line when you move stock from main — quantities update inventory.
+                            </div>
+                        @endif
                         <h6 class="mb-2">Requested items</h6>
                         <div class="table-responsive">
                             <table class="table table-sm">
@@ -409,9 +523,20 @@
                                 </thead>
                                 <tbody>
                                     @foreach($req->items as $it)
+                                        @php
+                                            $st = $it->stock;
+                                            $qtyLine = number_format($it->quantity, 2).' '.($st->qty_unit ?? $st->unit ?? '');
+                                            if ($st && $this->stockUsesPackages($st)) {
+                                                $pk = (float) ($st->package_size ?? 0);
+                                                if ($pk > 0) {
+                                                    $pkgQty = $it->quantity / $pk;
+                                                    $qtyLine = number_format($pkgQty, 4).' '.$st->package_unit.' (≈ '.$qtyLine.' base)';
+                                                }
+                                            }
+                                        @endphp
                                         <tr>
                                             <td>{{ $it->stock->name ?? 'N/A' }}</td>
-                                            <td>{{ number_format($it->quantity, 2) }} {{ $it->stock->qty_unit ?? $it->stock->unit ?? '' }}</td>
+                                            <td>{{ $qtyLine }}</td>
                                             @if($req->type === 'transfer_substock')
                                                 <td>{{ $it->toStockLocation->name ?? $req->toStockLocation->name ?? '—' }}</td>
                                             @endif
@@ -435,7 +560,7 @@
                         @endif
 
                         {{-- Comments: Manager/Super Admin or requester or Bar/Restaurant approver can add --}}
-                        @php $canComment = $canAuthorize || $canAuthorizeBarRestaurant || $req->requested_by_id === auth()->id(); @endphp
+                        @php $canComment = $this->userCanCommentOnStockRequest($req); @endphp
                         <div class="border-top pt-3 mt-3">
                             <h6 class="mb-2">Comments ({{ $req->comments->count() }})</h6>
                             @if($req->comments->isNotEmpty())
@@ -471,13 +596,8 @@
                         @if($req->status !== 'pending' && auth()->user()->isSuperAdmin())
                             <button type="button" class="btn btn-outline-secondary btn-sm" wire:click="setRequestToPending({{ $req->id }})" wire:loading.attr="disabled">Set to pending</button>
                         @endif
-                        @if($req->status === 'pending')
-                            @php
-                                $canEditReq = $req->requested_by_id === auth()->id() || ($canAuthorize && auth()->user()->isManager()) || ($req->isBarRestaurantRequisition() && $canAuthorizeBarRestaurant && auth()->user()->isManager());
-                            @endphp
-                            @if($canEditReq)
-                                <button type="button" class="btn btn-primary btn-sm" wire:click="editRequest({{ $req->id }})">Edit request</button>
-                            @endif
+                        @if($req->status === 'pending' && $this->userCanEditPendingStockRequest($req))
+                            <button type="button" class="btn btn-primary btn-sm" wire:click="editRequest({{ $req->id }})">Edit request</button>
                         @endif
                         @if(!$req->isDeletionRequested())
                             @if(auth()->user()->isSuperAdmin())

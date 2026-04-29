@@ -6,17 +6,17 @@ use App\Models\Hotel;
 use App\Models\Invoice;
 use App\Models\MenuItem;
 use App\Models\Order;
-use App\Models\User;
 use App\Models\OrderItem;
 use App\Models\OrderItemVoidRequest;
 use App\Models\PosSession;
 use App\Models\PreparationStation;
 use App\Models\RestaurantTable;
+use App\Models\User;
+use App\Notifications\OrderPlacedNotification;
+use App\Notifications\VoidRequestNotification;
 use App\Services\ActivityLogger;
 use App\Services\InvoiceNumberService;
 use App\Support\ActivityLogModule;
-use App\Notifications\VoidRequestNotification;
-use App\Notifications\OrderPlacedNotification;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Livewire\Component;
@@ -27,7 +27,9 @@ class PosOrders extends Component
     use WithPagination;
 
     protected $paginationTheme = 'bootstrap';
+
     public $filter_status = 'OPEN'; // legacy, kept for compatibility with query param
+
     public string $view_filter = 'all'; // all, mine, open, confirmed, paid, unpaid, transferred, cancelled
 
     /** Hotel-local date range for the orders list (default: today). */
@@ -43,32 +45,51 @@ class PosOrders extends Component
 
     /** Active hotel users for the waiter filter dropdown (id + name). */
     public array $orderFilterUsers = [];
+
     public $showOrderForm = false;
+
     public $showOrderDetail = false;
+
     public $selectedOrderId = null;
+
     public $selectedOrder = null;
+
     public $orderItems = [];
+
     public $table_id = '';
+
     public $menuItems = [];
+
     public $add_item_search = '';
+
     public $add_menu_item_id = '';
+
     public $add_quantity = 1;
+
     public $add_item_notes = '';
+
+    public string $add_sales_category_filter = '';
+
     /** Station to post the new item to (default from menu item) */
     public $add_station = '';
 
     // Order transfer
     public $showTransferForm = false;
+
     public $transfer_to_user_id = '';
+
     public $transfer_comment = '';
+
     public $transferUsers = [];
 
     /** Modal: post single item — order_item id and selected station */
     public ?int $postItemModalOrderItemId = null;
+
     public string $postItemModalStation = '';
 
     /** Modal: per-item options/ingredients */
     public ?int $editOptionsOrderItemId = null;
+
     public array $editOptionsData = [
         'temperature' => '',
         'sugar' => '',
@@ -76,6 +97,7 @@ class PosOrders extends Component
         'ingredients' => [],
         'notes' => '',
     ];
+
     /** Dynamic option groups for the selected order item (driven by Menu Management). */
     public array $editOptionGroups = [];
 
@@ -166,8 +188,9 @@ class PosOrders extends Component
     public function mount()
     {
         $session = PosSession::getOpenForUser(Auth::id());
-        if (!$session) {
+        if (! $session) {
             session()->flash('error', 'Open a POS session first.');
+
             return $this->redirect(route('pos.home'), navigate: true);
         }
 
@@ -293,10 +316,16 @@ class PosOrders extends Component
         $this->resetPage();
     }
 
+    public function updatedAddSalesCategoryFilter(): void
+    {
+        $this->add_menu_item_id = '';
+    }
+
     protected function requireSession()
     {
-        if (!PosSession::getOpenForUser(Auth::id())) {
+        if (! PosSession::getOpenForUser(Auth::id())) {
             session()->flash('error', 'Open a POS session first.');
+
             return $this->redirect(route('pos.home'), navigate: true);
         }
     }
@@ -425,6 +454,7 @@ class PosOrders extends Component
         ])->find($orderId);
         if (! $this->selectedOrder) {
             $this->showOrderDetail = false;
+
             return;
         }
         // Item-level editing is restricted:
@@ -433,6 +463,7 @@ class PosOrders extends Component
         $this->canEditSelectedOrderItems = $this->canUserAddItems($this->selectedOrder);
         $this->orderItems = $this->selectedOrder->orderItems->map(function (OrderItem $item) {
             $pendingVoid = $item->voidRequests->where('status', OrderItemVoidRequest::STATUS_PENDING)->first();
+
             return [
                 'id' => $item->id,
                 'menu_item' => $item->menuItem
@@ -472,6 +503,7 @@ class PosOrders extends Component
             return '—';
         }
         $stations = PreparationStation::getActiveForPos();
+
         return $stations[$slug] ?? ucfirst(str_replace('_', ' ', $slug));
     }
 
@@ -497,6 +529,7 @@ class PosOrders extends Component
         }
         if (! $this->canTransferOrders()) {
             session()->flash('error', 'Only a manager, controller, or cashier can transfer orders.');
+
             return;
         }
         $this->showTransferForm = true;
@@ -513,6 +546,7 @@ class PosOrders extends Component
 
         if (! $this->canTransferOrders()) {
             session()->flash('error', 'Only a manager, controller, or cashier can transfer orders.');
+
             return;
         }
 
@@ -527,6 +561,7 @@ class PosOrders extends Component
         }
         if ($order->order_status === 'PAID' || $order->order_status === 'CANCELLED') {
             session()->flash('error', 'Only OPEN or CONFIRMED orders can be transferred.');
+
             return;
         }
 
@@ -561,10 +596,12 @@ class PosOrders extends Component
         $order = Order::find($this->selectedOrderId);
         if (! $order || $order->order_status === 'CANCELLED') {
             session()->flash('error', 'Cannot add items: order is not active.');
+
             return;
         }
         if (! $this->canUserAddItems($order)) {
             session()->flash('error', 'Only the waiter who created the order or the cashier can add items.');
+
             return;
         }
 
@@ -626,6 +663,7 @@ class PosOrders extends Component
         }
         if ($item->isPosted()) {
             session()->flash('message', 'Item already posted.');
+
             return;
         }
         $this->postItemModalOrderItemId = $orderItemId;
@@ -656,10 +694,12 @@ class PosOrders extends Component
         $order = Order::find($this->selectedOrderId);
         if (! $order || ! $order->canEditItems()) {
             session()->flash('error', 'Order is not open.');
+
             return;
         }
         if (! $this->canUserAddItems($order)) {
             session()->flash('error', 'Only the waiter who created the order or the cashier can adjust item options.');
+
             return;
         }
 
@@ -697,6 +737,7 @@ class PosOrders extends Component
                     'display_order' => $group->display_order,
                     'options' => $group->options->sortBy('display_order')->values()->map(function (\App\Models\MenuItemOption $opt) use ($selectedValues) {
                         $val = $opt->value ?: \Illuminate\Support\Str::slug($opt->label, '_');
+
                         return [
                             'id' => $opt->id,
                             'label' => $opt->label,
@@ -733,10 +774,12 @@ class PosOrders extends Component
         $order = Order::find($this->selectedOrderId);
         if (! $order || ! $order->canEditItems()) {
             session()->flash('error', 'Order is not open.');
+
             return;
         }
         if (! $this->canUserAddItems($order)) {
             session()->flash('error', 'Only the waiter who created the order or the cashier can adjust item options.');
+
             return;
         }
 
@@ -752,6 +795,7 @@ class PosOrders extends Component
         $item = OrderItem::find($this->editOptionsOrderItemId);
         if (! $item || $item->order_id != $this->selectedOrderId) {
             $this->closeEditItemOptions();
+
             return;
         }
 
@@ -825,6 +869,7 @@ class PosOrders extends Component
         $user = Auth::user();
         if (! $order || $order->order_status === 'CANCELLED') {
             session()->flash('error', 'Order is not active.');
+
             return;
         }
         if (! $order->canEditItems()) {
@@ -832,34 +877,39 @@ class PosOrders extends Component
             // as long as the order ticket has not been printed yet.
             if (! ($user?->isCashier() && $order->order_ticket_printed_at === null)) {
                 session()->flash('error', 'Order is not open.');
+
                 return;
             }
         }
         if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'You cannot post items for this order.');
+
             return;
         }
         if ($item->isPosted()) {
             session()->flash('message', 'Item already posted to station.');
             $this->closePostItemModal();
             $this->selectOrder($order->id);
+
             return;
         }
         $station = $station ?? $this->postItemModalStation;
         $station = trim($station ?? '') ?: ($item->menuItem?->preparation_station ?? '');
         if (! $station) {
             session()->flash('error', 'Select a station for this item.');
+
             return;
         }
         if (! PreparationStation::isActiveStation($station)) {
             session()->flash('error', 'Cannot post to an inactive station. Please choose an active station.');
+
             return;
         }
         $item->update([
             'posted_to_station' => $station,
             'sent_to_station_at' => now(),
         ]);
-        session()->flash('message', 'Item posted to ' . $this->stationLabel($station) . '.');
+        session()->flash('message', 'Item posted to '.$this->stationLabel($station).'.');
         $this->closePostItemModal();
         $this->selectOrder($order->id);
     }
@@ -882,15 +932,18 @@ class PosOrders extends Component
 
         if (! $order || ! in_array($order->order_status, ['OPEN', 'CONFIRMED'], true) && ! $canPrintPaid) {
             session()->flash('error', 'Order is not available for printing.');
+
             return;
         }
         if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'You cannot print items for this order.');
+
             return;
         }
         if ($item->isPrinted()) {
             session()->flash('message', 'Item already printed.');
             $this->selectOrder($order->id);
+
             return;
         }
         $item->update(['printed_at' => now()]);
@@ -910,25 +963,30 @@ class PosOrders extends Component
         $order = Order::find($this->selectedOrderId);
         if (! $order || $order->order_status === 'CANCELLED') {
             session()->flash('error', 'Order is not active.');
+
             return;
         }
         if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'You cannot request void for this order.');
+
             return;
         }
         if ($item->isVoided()) {
             session()->flash('error', 'Item is already voided.');
+
             return;
         }
         if (! $item->isPosted() && ! $item->isPrinted()) {
             // Cashiers cannot remove items directly; request a void for manager approval instead.
             if (! Auth::user()?->isCashier()) {
                 session()->flash('error', 'Use Remove for items not yet posted or printed.');
+
                 return;
             }
         }
         if ($item->voidRequests()->where('status', OrderItemVoidRequest::STATUS_PENDING)->exists()) {
             session()->flash('error', 'A void request is already pending for this item.');
+
             return;
         }
         $item->voidRequests()->create([
@@ -955,15 +1013,18 @@ class PosOrders extends Component
         $user = Auth::user();
         if (! $user || ! $user->hasPermission('pos_approve_void')) {
             session()->flash('error', 'You do not have permission to approve void requests.');
+
             return;
         }
         $request = OrderItemVoidRequest::with('orderItem.order')->find($requestId);
         if (! $request || $request->status !== OrderItemVoidRequest::STATUS_PENDING) {
             session()->flash('error', 'Invalid or already resolved request.');
+
             return;
         }
         if ($request->orderItem->order_id != $this->selectedOrderId) {
             session()->flash('error', 'Request does not belong to this order.');
+
             return;
         }
         $request->orderItem->update([
@@ -987,11 +1048,13 @@ class PosOrders extends Component
         $user = Auth::user();
         if (! $user || ! $user->hasPermission('pos_approve_void')) {
             session()->flash('error', 'You do not have permission to reject void requests.');
+
             return;
         }
         $request = OrderItemVoidRequest::with('orderItem')->find($requestId);
         if (! $request || $request->status !== OrderItemVoidRequest::STATUS_PENDING) {
             session()->flash('error', 'Invalid or already resolved request.');
+
             return;
         }
         if ($request->orderItem->order_id != $this->selectedOrderId) {
@@ -1027,13 +1090,23 @@ class PosOrders extends Component
     public function getFilteredMenuItemsProperty(): array
     {
         $search = trim($this->add_item_search);
+        $rows = $this->menuItems;
+
+        if ($this->add_sales_category_filter !== '') {
+            $rows = array_values(array_filter($rows, function ($mi) {
+                return (string) ($mi['sales_category'] ?? 'food') === $this->add_sales_category_filter;
+            }));
+        }
+
         if ($search === '') {
-            return $this->menuItems;
+            return $rows;
         }
         $lower = mb_strtolower($search);
-        return array_values(array_filter($this->menuItems, function ($mi) use ($lower) {
+
+        return array_values(array_filter($rows, function ($mi) use ($lower) {
             $name = mb_strtolower($mi['name'] ?? '');
             $code = mb_strtolower($mi['code'] ?? '');
+
             return str_contains($name, $lower) || str_contains($code, $lower);
         }));
     }
@@ -1043,6 +1116,7 @@ class PosOrders extends Component
     {
         if (! $value) {
             $this->add_station = '';
+
             return;
         }
         $menuItem = collect($this->menuItems)->firstWhere('menu_item_id', (int) $value);
@@ -1059,17 +1133,21 @@ class PosOrders extends Component
         if (! $order->canEditItems()) {
             if (Auth::user()?->isCashier()) {
                 session()->flash('error', 'Cashiers cannot remove items from a paid order. Request void for manager approval instead.');
+
                 return;
             }
             session()->flash('error', 'Cannot remove items: order is not open.');
+
             return;
         }
         if (! $this->canUserRemoveItems($order)) {
             session()->flash('error', 'Only the waiter who created the order can remove items. Use void / modification request instead.');
+
             return;
         }
         if (! $item->canRemove()) {
             session()->flash('error', 'Cannot remove: item was already posted or printed. Request a void instead.');
+
             return;
         }
         $item->delete();
@@ -1079,21 +1157,24 @@ class PosOrders extends Component
 
     public function requestInvoice()
     {
-        if (!$this->selectedOrderId) {
+        if (! $this->selectedOrderId) {
             return;
         }
         $order = Order::with('orderItems')->find($this->selectedOrderId);
         if ($order->order_status !== 'OPEN') {
             session()->flash('error', 'Order is not open.');
+
             return;
         }
-        if (!$this->canModifyOrder($order)) {
+        if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'Only the assigned waiter or manager can request an invoice for this order.');
+
             return;
         }
         $nonVoidedItems = $order->orderItems->whereNull('voided_at');
         if ($nonVoidedItems->isEmpty()) {
             session()->flash('error', 'Add at least one non-voided item before requesting invoice.');
+
             return;
         }
 
@@ -1127,16 +1208,18 @@ class PosOrders extends Component
 
     public function voidOrder()
     {
-        if (!$this->selectedOrderId) {
+        if (! $this->selectedOrderId) {
             return;
         }
         $order = Order::find($this->selectedOrderId);
         if ($order->order_status !== 'OPEN') {
             session()->flash('error', 'Only open orders can be voided.');
+
             return;
         }
-        if (!$this->canModifyOrder($order)) {
+        if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'Only the assigned waiter or manager can void this order.');
+
             return;
         }
         $tableId = $order->table_id;
@@ -1171,10 +1254,12 @@ class PosOrders extends Component
         }
         if (! in_array($order->order_status, ['OPEN', 'CONFIRMED'], true)) {
             session()->flash('error', 'Only open or confirmed orders can have order ticket printed.');
+
             return;
         }
         if (! $this->canModifyOrder($order)) {
             session()->flash('error', 'Only the assigned waiter or manager can print order ticket.');
+
             return;
         }
 

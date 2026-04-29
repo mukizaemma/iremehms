@@ -2,7 +2,7 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
         <div>
             <h5 class="mb-0">Stock Opening & Closing Report</h5>
-            <p class="text-muted small mb-0">Opening, sales, and closing by stock. Filter by date or single item.</p>
+            <p class="text-muted small mb-0">Opening, received, issued/sold, and closing by stock (base + package units where configured).</p>
         </div>
         <a href="{{ route('stock.reports') }}" class="btn btn-secondary btn-sm">
             <i class="fa fa-arrow-left me-2"></i>Back to Stock Reports
@@ -94,6 +94,8 @@
                                 <th>Location</th>
                                 <th class="text-end">Unit price</th>
                                 <th class="text-end">Opening qty</th>
+                                <th class="text-end">Received qty</th>
+                                <th class="text-end">Issued qty</th>
                                 <th class="text-end">Qty sold</th>
                                 <th class="text-end">Amount (sold)</th>
                                 <th class="text-end">Closing qty</th>
@@ -106,17 +108,39 @@
                                     <td><strong>{{ $row['stock_name'] }}</strong></td>
                                     <td>{{ $row['location_name'] }}</td>
                                     <td class="text-end">{{ \App\Helpers\CurrencyHelper::format($row['unit_price']) }}</td>
-                                    <td class="text-end">{{ number_format($row['opening'], 2) }}</td>
+                                    <td class="text-end">
+                                        {{ number_format($row['opening'], 2) }} {{ $row['qty_unit'] }}
+                                        @if($row['opening_packages'] !== null)
+                                            <div class="small text-muted">≈ {{ number_format($row['opening_packages'], 4) }} {{ $row['package_unit'] }}</div>
+                                        @endif
+                                    </td>
+                                    <td class="text-end">
+                                        {{ number_format($row['qty_received'], 2) }} {{ $row['qty_unit'] }}
+                                        @if($row['qty_received_packages'] !== null)
+                                            <div class="small text-muted">≈ {{ number_format($row['qty_received_packages'], 4) }} {{ $row['package_unit'] }}</div>
+                                        @endif
+                                    </td>
+                                    <td class="text-end">
+                                        {{ number_format($row['qty_issued'], 2) }} {{ $row['qty_unit'] }}
+                                        @if($row['qty_issued_packages'] !== null)
+                                            <div class="small text-muted">≈ {{ number_format($row['qty_issued_packages'], 4) }} {{ $row['package_unit'] }}</div>
+                                        @endif
+                                    </td>
                                     <td class="text-end">{{ number_format($row['qty_sold'], 2) }}</td>
                                     <td class="text-end">{{ \App\Helpers\CurrencyHelper::format($row['sold_amount']) }}</td>
-                                    <td class="text-end">{{ number_format($row['closing'], 2) }}</td>
+                                    <td class="text-end">
+                                        {{ number_format($row['closing'], 2) }} {{ $row['qty_unit'] }}
+                                        @if($row['closing_packages'] !== null)
+                                            <div class="small text-muted">≈ {{ number_format($row['closing_packages'], 4) }} {{ $row['package_unit'] }}</div>
+                                        @endif
+                                    </td>
                                     <td class="text-end">{{ \App\Helpers\CurrencyHelper::format($row['closing_value']) }}</td>
                                 </tr>
                             @endforeach
                         </tbody>
                         <tfoot class="table-light">
                             <tr>
-                                <th colspan="5" class="text-end">Total amount (sold)</th>
+                                <th colspan="7" class="text-end">Total amount (sold)</th>
                                 <th class="text-end">{{ \App\Helpers\CurrencyHelper::format($totalAmount) }}</th>
                                 <th colspan="2"></th>
                             </tr>

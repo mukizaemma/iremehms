@@ -10,7 +10,9 @@ use App\Models\Stock;
 use App\Models\StockRequest;
 use App\Models\StockRequestItem;
 use App\Models\Supplier;
+use App\Services\ActivityLogger;
 use App\Services\StockRequestExecutionService;
+use App\Support\ActivityLogModule;
 use App\Traits\ChecksModuleStatus;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
@@ -20,9 +22,13 @@ class StockOut extends Component
     use ChecksModuleStatus;
 
     public $showAddToRequisitionModal = false;
+
     public $selectedItemIds = [];
+
     public $requisition_supplier_id = null;
+
     public $requisition_department_id = null;
+
     public $requisition_notes = '';
 
     public function mount()
@@ -38,11 +44,12 @@ class StockOut extends Component
                 StockRequest::TYPE_TRANSFER_SUBSTOCK,
                 StockRequest::TYPE_ISSUE_DEPARTMENT,
                 StockRequest::TYPE_TRANSFER_DEPARTMENT,
+                StockRequest::TYPE_ISSUE_BAR_RESTAURANT,
             ])
             ->orderBy('approved_at')
             ->get()
             ->filter(function ($req) {
-                return $req->items->contains(fn ($i) => $i->isPendingIssue() && !$i->isOnRequisition());
+                return $req->items->contains(fn ($i) => $i->isPendingIssue() && ! $i->isOnRequisition());
             });
     }
 
@@ -57,7 +64,7 @@ class StockOut extends Component
         $enabledDepartments = is_array($hotel?->enabled_departments ?? null) ? $hotel->enabled_departments : [];
 
         $deptQuery = Department::where('is_active', true);
-        if (!empty($enabledDepartments)) {
+        if (! empty($enabledDepartments)) {
             $deptQuery->whereIn('id', $enabledDepartments);
         }
 
@@ -67,8 +74,9 @@ class StockOut extends Component
     public function issueItem($itemId)
     {
         $item = StockRequestItem::with('stockRequest')->find($itemId);
-        if (!$item || !$item->isPendingIssue() || $item->isOnRequisition()) {
+        if (! $item || ! $item->isPendingIssue() || $item->isOnRequisition()) {
             session()->flash('error', 'Item not found or not available to issue.');
+
             return;
         }
         try {
@@ -79,20 +87,21 @@ class StockOut extends Component
                 session()->flash('error', 'Could not issue: check stock availability.');
             }
         } catch (\Throwable $e) {
-            session()->flash('error', 'Error: ' . $e->getMessage());
+            session()->flash('error', 'Error: '.$e->getMessage());
         }
     }
 
     public function issueAllForRequest($requestId)
     {
         $request = StockRequest::with('items')->find($requestId);
-        if (!$request || !$request->isApproved()) {
+        if (! $request || ! $request->isApproved()) {
             session()->flash('error', 'Request not found.');
+
             return;
         }
         $issued = 0;
         foreach ($request->items as $item) {
-            if (!$item->isPendingIssue() || $item->isOnRequisition()) {
+            if (! $item->isPendingIssue() || $item->isOnRequisition()) {
                 continue;
             }
             try {
@@ -100,7 +109,7 @@ class StockOut extends Component
                     $issued++;
                 }
             } catch (\Throwable $e) {
-                session()->flash('error', 'Stopped: ' . $e->getMessage());
+                session()->flash('error', 'Stopped: '.$e->getMessage());
                 break;
             }
         }
@@ -135,9 +144,10 @@ class StockOut extends Component
             'selectedItemIds.*' => 'exists:stock_request_items,id',
         ]);
         $items = StockRequestItem::with('stockRequest', 'stock')->findMany($this->selectedItemIds);
-        $items = $items->filter(fn ($i) => $i->isPendingIssue() && !$i->isOnRequisition());
+        $items = $items->filter(fn ($i) => $i->isPendingIssue() && ! $i->isOnRequisition());
         if ($items->isEmpty()) {
             session()->flash('error', 'No valid items to add to requisition.');
+
             return;
         }
         $resolved = \App\Services\TimeAndShiftResolver::resolve();
@@ -148,7 +158,7 @@ class StockOut extends Component
             'status' => 'SUBMITTED',
             'business_date' => $resolved['business_date'],
             'shift_id' => $resolved['shift_id'],
-            'notes' => 'From Stock Out (requested items not in stock). ' . $this->requisition_notes,
+            'notes' => 'From Stock Out (requested items not in stock). '.$this->requisition_notes,
         ]);
         foreach ($items as $sri) {
             $remaining = (float) $sri->quantity - (float) ($sri->quantity_issued ?? 0);
@@ -161,7 +171,7 @@ class StockOut extends Component
                 'quantity_requested' => $remaining,
                 'unit_id' => $sri->stock->qty_unit ?? $sri->stock->unit,
                 'estimated_unit_cost' => $sri->stock->purchase_price,
-                'notes' => 'Stock request #' . $sri->stock_request_id,
+                'notes' => 'Stock request #'.$sri->stock_request_id,
                 'stock_request_item_id' => $sri->id,
             ]);
             $sri->update([
@@ -169,6 +179,15 @@ class StockOut extends Component
                 'purchase_requisition_item_id' => $pri->line_id,
             ]);
         }
+        ActivityLogger::log(
+            'stock_out_add_requisition',
+            'Added '.$items->count().' stock request line(s) to purchase requisition #'.$pr->requisition_id.'.',
+            PurchaseRequisition::class,
+            $pr->requisition_id,
+            null,
+            ['stock_request_item_ids' => $items->pluck('id')->all()],
+            ActivityLogModule::STOCK
+        );
         session()->flash('message', 'Items added to purchase requisition. Awaiting approval.');
         $this->closeAddToRequisitionModal();
     }
@@ -176,6 +195,7 @@ class StockOut extends Component
     public function getAvailableQuantity(StockRequestItem $item): float
     {
         $stock = Stock::find($item->stock_id);
+
         return $stock ? (float) ($stock->current_stock ?? $stock->quantity ?? 0) : 0;
     }
 

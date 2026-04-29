@@ -3,9 +3,9 @@
 namespace App\Livewire;
 
 use App\Models\Department;
-use App\Models\Hotel;
 use App\Models\GoodsReceipt;
 use App\Models\GoodsReceiptItem;
+use App\Models\Hotel;
 use App\Models\PurchaseRequisition;
 use App\Models\PurchaseRequisitionItem;
 use App\Models\Stock;
@@ -15,9 +15,10 @@ use App\Models\Supplier;
 use App\Services\ActivityLogger;
 use App\Services\OperationalShiftActionGate;
 use App\Services\StockRequestExecutionService;
-use App\Support\ActivityLogModule;
 use App\Services\TimeAndShiftResolver;
+use App\Support\ActivityLogModule;
 use App\Traits\ChecksModuleStatus;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Livewire\Component;
@@ -25,48 +26,70 @@ use Livewire\WithPagination;
 
 class GoodsReceipts extends Component
 {
-    use WithPagination, ChecksModuleStatus;
+    use ChecksModuleStatus, WithPagination;
 
     public $receipts = [];
+
     public $showReceiptForm = false;
+
     public $editingReceiptId = null;
+
+    /** True when viewing a posted receipt (read-only). */
+    public bool $receiptReadOnly = false;
+
     public $selectedRequisitionId = null;
-    
+
     // Form fields
     public $requisition_id = null;
+
     public $supplier_id = null;
+
     public $department_id = null;
+
     public $receipt_status = 'COMPLETE';
+
     public $notes = '';
-    
+
     // Receipt items
     public $receiptItems = [];
-    
+
+    /** Parallel to receiptItems: search text to filter the item dropdown per row */
+    public array $receiptItemSearch = [];
+
     // Filters
     public $filter_status = '';
+
     public $filter_supplier = '';
+
     public $search = '';
-    
+
     public $suppliers = [];
+
     public $departments = [];
+
     public $requisitions = [];
+
     public $stockLocations = [];
+
     public $stocks = [];
+
+    /** Count of GRNs in DRAFT (not filtered; for list prompts). */
+    public int $draftReceiptCount = 0;
 
     public function mount()
     {
         // Check if store module is enabled
         $this->ensureModuleEnabled('store');
-        
+
         // Check access: Store Keeper, Manager, Super Admin
         $user = Auth::user();
-        if (!$user->isSuperAdmin() && !$user->isManager() && !$this->isStoreKeeper($user)) {
+        if (! $user->isSuperAdmin() && ! $user->isManager() && ! $this->isStoreKeeper($user)) {
             abort(403, 'Unauthorized access. Only Store Keeper, Manager, and Super Admin can access Goods Receipts.');
         }
-        
+
         $this->loadData();
     }
-    
+
     private function isStoreKeeper($user)
     {
         return $user->hasModuleAccess(\App\Models\Module::where('slug', 'store')->first()?->id ?? 0);
@@ -79,15 +102,16 @@ class GoodsReceipts extends Component
         $enabledDepartments = is_array($hotel?->enabled_departments ?? null) ? $hotel->enabled_departments : [];
 
         $deptQuery = Department::where('is_active', true);
-        if (!empty($enabledDepartments)) {
+        if (! empty($enabledDepartments)) {
             $deptQuery->whereIn('id', $enabledDepartments);
         }
         $this->departments = $deptQuery->orderBy('name')->get();
         $this->stockLocations = StockLocation::where('is_active', true)->orderBy('name')->get();
-        $this->stocks = Stock::with(['itemType', 'stockLocation'])->orderBy('name')->get();
+        $this->stocks = Stock::with(['itemType', 'stockLocation'])->orderBy('name')->get(); // Collection (used for searchable lines)
+        // Exclude requisitions that already have a completed or in-progress (draft) goods receipt
         $this->requisitions = PurchaseRequisition::where('status', 'APPROVED')
-            ->whereDoesntHave('goodsReceipts', function($query) {
-                $query->where('receipt_status', 'COMPLETE');
+            ->whereDoesntHave('goodsReceipts', function ($query) {
+                $query->whereIn('receipt_status', ['COMPLETE', 'DRAFT']);
             })
             ->with(['supplier', 'items.item'])
             ->orderBy('created_at', 'desc')
@@ -98,48 +122,56 @@ class GoodsReceipts extends Component
     public function loadReceipts()
     {
         $query = GoodsReceipt::with(['supplier', 'receivedBy', 'department', 'requisition', 'items.item', 'items.location']);
-        
+
         // Filter by status
         if ($this->filter_status) {
             $query->where('receipt_status', $this->filter_status);
         }
-        
+
         // Filter by supplier
         if ($this->filter_supplier) {
             $query->where('supplier_id', $this->filter_supplier);
         }
-        
+
         // Search
         if ($this->search) {
-            $query->where(function($q) {
-                $q->whereHas('supplier', function($sq) {
-                    $sq->where('name', 'like', '%' . $this->search . '%');
+            $query->where(function ($q) {
+                $q->whereHas('supplier', function ($sq) {
+                    $sq->where('name', 'like', '%'.$this->search.'%');
                 })
-                ->orWhere('notes', 'like', '%' . $this->search . '%');
+                    ->orWhere('notes', 'like', '%'.$this->search.'%');
             });
         }
-        
-        $this->receipts = $query->orderBy('created_at', 'desc')->get()->toArray();
+
+        $this->receipts = $query
+            ->orderByRaw("CASE WHEN receipt_status = 'DRAFT' THEN 0 ELSE 1 END")
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->toArray();
+
+        $this->draftReceiptCount = GoodsReceipt::where('receipt_status', 'DRAFT')->count();
     }
 
     public function openReceiptForm($requisitionId = null)
     {
         $this->editingReceiptId = null;
+        $this->receiptReadOnly = false;
         $this->selectedRequisitionId = $requisitionId;
         $this->receiptItems = [];
-        
+
         if ($requisitionId) {
             $requisition = PurchaseRequisition::with('items.item')->find($requisitionId);
-            
-            if (!$requisition || $requisition->status !== 'APPROVED') {
+
+            if (! $requisition || $requisition->status !== 'APPROVED') {
                 session()->flash('error', 'Selected requisition is not approved or does not exist.');
+
                 return;
             }
-            
+
             $this->requisition_id = $requisitionId;
             $this->supplier_id = $requisition->supplier_id;
             $this->department_id = $requisition->department_id;
-            
+
             // Pre-populate items from requisition (amount = received qty × unit cost; update cost if changed)
             foreach ($requisition->items as $item) {
                 $qty = (float) $item->quantity_requested;
@@ -157,12 +189,67 @@ class GoodsReceipts extends Component
                     'notes' => $item->notes ?? '',
                     'purchase_requisition_item_id' => $item->stock_request_item_id ? $item->line_id : null,
                 ];
+                $this->receiptItemSearch[] = $item->item ? (string) $item->item->name : '';
             }
             $this->recalculateReceiptItemTotals();
         } else {
             $this->resetForm();
         }
-        
+
+        $this->showReceiptForm = true;
+    }
+
+    /**
+     * Open an existing receipt from the list (draft = editable, posted = read-only).
+     */
+    public function openReceiptForEdit(int $receiptId): void
+    {
+        $receipt = GoodsReceipt::with(['items.item', 'requisition.items'])->find($receiptId);
+        if (! $receipt) {
+            session()->flash('error', 'Receipt not found.');
+
+            return;
+        }
+
+        $requestedByPrLine = [];
+        if ($receipt->requisition) {
+            foreach ($receipt->requisition->items as $ri) {
+                $requestedByPrLine[(int) $ri->line_id] = (float) $ri->quantity_requested;
+            }
+        }
+
+        $this->editingReceiptId = $receipt->receipt_id;
+        $this->requisition_id = $receipt->requisition_id;
+        $this->supplier_id = $receipt->supplier_id;
+        $this->department_id = $receipt->department_id;
+        $this->receipt_status = $receipt->receipt_status === 'DRAFT' ? 'COMPLETE' : $receipt->receipt_status;
+        $this->notes = $receipt->notes ?? '';
+        $this->selectedRequisitionId = $receipt->requisition_id;
+        $this->receiptReadOnly = $receipt->receipt_status !== 'DRAFT';
+        $this->receiptItems = [];
+        $this->receiptItemSearch = [];
+
+        foreach ($receipt->items as $line) {
+            $prItemId = $line->purchase_requisition_item_id;
+            $qtyRequested = ($prItemId && isset($requestedByPrLine[(int) $prItemId]))
+                ? $requestedByPrLine[(int) $prItemId]
+                : 0.0;
+
+            $this->receiptItems[] = [
+                'item_id' => $line->item_id,
+                'location_id' => $line->location_id,
+                'quantity_requested' => $qtyRequested,
+                'quantity_received' => (float) $line->quantity_received,
+                'unit_id' => $line->unit_id ?? '',
+                'unit_cost' => (float) $line->unit_cost,
+                'total_cost' => (float) $line->total_cost,
+                'expiry_date' => null,
+                'notes' => $line->notes ?? '',
+                'purchase_requisition_item_id' => $line->purchase_requisition_item_id,
+            ];
+            $this->receiptItemSearch[] = $line->item ? (string) $line->item->name : '';
+        }
+        $this->recalculateReceiptItemTotals();
         $this->showReceiptForm = true;
     }
 
@@ -180,11 +267,35 @@ class GoodsReceipts extends Component
         $this->supplier_id = null;
         // Default to current user's department if it's enabled for the hotel; otherwise leave empty.
         $userDeptId = Auth::user()->department_id;
-        $enabledDeptIds = $this->departments ? array_map(fn ($d) => (int) ($d->id ?? 0), $this->departments) : [];
+        $enabledDeptIds = collect($this->departments ?? [])->map(fn ($d) => (int) (is_array($d) ? ($d['id'] ?? 0) : ($d->id ?? 0)))->all();
         $this->department_id = in_array((int) $userDeptId, $enabledDeptIds, true) ? (int) $userDeptId : null;
         $this->receipt_status = 'COMPLETE';
         $this->notes = '';
         $this->receiptItems = [];
+        $this->receiptItemSearch = [];
+        $this->receiptReadOnly = false;
+    }
+
+    /**
+     * Stocks shown in the item dropdown for one line (filtered by receiptItemSearch for that index).
+     */
+    public function stocksForReceiptRow(int $index): Collection
+    {
+        $stocks = collect($this->stocks);
+        $q = mb_strtolower(trim((string) ($this->receiptItemSearch[$index] ?? '')));
+        if ($q === '') {
+            return $stocks->take(100)->values();
+        }
+
+        return $stocks->filter(function ($s) use ($q) {
+            $name = mb_strtolower((string) (is_array($s) ? ($s['name'] ?? '') : ($s->name ?? '')));
+            $code = mb_strtolower((string) (is_array($s) ? ($s['code'] ?? '') : ($s->code ?? '')));
+            $barcode = mb_strtolower((string) (is_array($s) ? ($s['barcode'] ?? '') : ($s->barcode ?? '')));
+
+            return str_contains($name, $q)
+                || ($code !== '' && str_contains($code, $q))
+                || ($barcode !== '' && str_contains($barcode, $q));
+        })->take(150)->values();
     }
 
     public function addReceiptItem()
@@ -201,12 +312,15 @@ class GoodsReceipts extends Component
             'notes' => '',
             'purchase_requisition_item_id' => null,
         ];
+        $this->receiptItemSearch[] = '';
     }
 
     public function removeReceiptItem($index)
     {
         unset($this->receiptItems[$index]);
+        unset($this->receiptItemSearch[$index]);
         $this->receiptItems = array_values($this->receiptItems);
+        $this->receiptItemSearch = array_values($this->receiptItemSearch);
     }
 
     /**
@@ -224,7 +338,7 @@ class GoodsReceipts extends Component
 
     public function updatedReceiptItems($value, $key)
     {
-        if (!is_string($key)) {
+        if (! is_string($key)) {
             return;
         }
 
@@ -241,13 +355,21 @@ class GoodsReceipts extends Component
 
             if ($index !== null && isset($this->receiptItems[$index])) {
                 $itemId = (int) ($this->receiptItems[$index]['item_id'] ?? 0);
-                $stock = $itemId > 0 ? collect($this->stocks)->firstWhere('id', $itemId) : null;
+                $stock = $itemId > 0 ? Stock::find($itemId) : null;
 
-                $this->receiptItems[$index]['location_id'] = $stock?->stock_location_id ?? $this->receiptItems[$index]['location_id'];
+                // Location comes from the stock master record (not chosen per line in the form).
+                $this->receiptItems[$index]['location_id'] = $stock?->stock_location_id ?? ($this->receiptItems[$index]['location_id'] ?? null);
                 $this->receiptItems[$index]['expiry_date'] = ($stock && ($stock->use_expiration ?? false)) ? $stock->expiration_date : null;
 
                 if (empty($this->receiptItems[$index]['unit_id'])) {
-                    $this->receiptItems[$index]['unit_id'] = $stock?->qty_unit ?? $stock?->unit ?? '';
+                    $pkg = (string) ($stock->package_unit ?? '');
+                    $this->receiptItems[$index]['unit_id'] = $pkg !== ''
+                        ? $pkg
+                        : (string) ($stock->qty_unit ?? $stock->unit ?? '');
+                }
+
+                if ($stock) {
+                    $this->receiptItemSearch[$index] = (string) $stock->name;
                 }
             }
 
@@ -255,7 +377,7 @@ class GoodsReceipts extends Component
         }
 
         // Recalculate line total when quantity_received or unit_cost changes.
-        if (!str_contains($key, 'quantity_received') && !str_contains($key, 'unit_cost')) {
+        if (! str_contains($key, 'quantity_received') && ! str_contains($key, 'unit_cost')) {
             return;
         }
 
@@ -275,17 +397,119 @@ class GoodsReceipts extends Component
         }
     }
 
-    public function saveReceipt()
+    /**
+     * Save as draft: persists header + lines only; does not change stock levels or create movements.
+     */
+    public function saveDraft(): void
     {
-        // Ensure all line amounts are recalculated from received qty × unit cost before save
-        $this->recalculateReceiptItemTotals();
+        if ($this->receiptReadOnly) {
+            return;
+        }
 
+        $this->recalculateReceiptItemTotals();
         $this->validate([
             'supplier_id' => 'required|exists:suppliers,supplier_id',
             'department_id' => 'required|exists:departments,id',
             'receiptItems' => 'required|array|min:1',
             'receiptItems.*.item_id' => 'required|exists:stocks,id',
-            'receiptItems.*.location_id' => 'required|exists:stock_locations,id',
+            'receiptItems.*.quantity_received' => 'required|numeric|min:0',
+            'receiptItems.*.unit_cost' => 'required|numeric|min:0',
+        ]);
+
+        $hasLine = collect($this->receiptItems)->contains(fn (array $row) => (float) ($row['quantity_received'] ?? 0) > 0);
+        if (! $hasLine) {
+            $this->addError('receiptItems', 'Add at least one line with received quantity greater than zero.');
+
+            return;
+        }
+
+        $hotel = Hotel::getHotel();
+        try {
+            OperationalShiftActionGate::assertStoreActionAllowed($hotel);
+        } catch (\RuntimeException $e) {
+            session()->flash('error', $e->getMessage());
+
+            return;
+        }
+
+        $resolved = TimeAndShiftResolver::resolve();
+
+        DB::beginTransaction();
+        try {
+            if ($this->editingReceiptId) {
+                $receipt = GoodsReceipt::lockForUpdate()->findOrFail($this->editingReceiptId);
+                if ($receipt->receipt_status !== 'DRAFT') {
+                    throw new \RuntimeException('Only draft receipts can be updated as a draft.');
+                }
+                $receipt->update([
+                    'requisition_id' => $this->requisition_id,
+                    'supplier_id' => $this->supplier_id,
+                    'department_id' => $this->department_id,
+                    'business_date' => $resolved['business_date'],
+                    'shift_id' => $resolved['shift_id'],
+                    'receipt_status' => 'DRAFT',
+                    'notes' => $this->notes,
+                ]);
+                GoodsReceiptItem::where('receipt_id', $receipt->receipt_id)->delete();
+            } else {
+                $receipt = GoodsReceipt::create([
+                    'requisition_id' => $this->requisition_id,
+                    'supplier_id' => $this->supplier_id,
+                    'received_by' => Auth::id(),
+                    'department_id' => $this->department_id,
+                    'business_date' => $resolved['business_date'],
+                    'shift_id' => $resolved['shift_id'],
+                    'receipt_status' => 'DRAFT',
+                    'notes' => $this->notes,
+                ]);
+                $this->editingReceiptId = $receipt->receipt_id;
+            }
+
+            foreach ($this->receiptItems as $itemData) {
+                if ((float) ($itemData['quantity_received'] ?? 0) <= 0) {
+                    continue;
+                }
+                $this->appendGoodsReceiptLine($receipt, $itemData, $resolved, false);
+            }
+
+            DB::commit();
+
+            ActivityLogger::log(
+                'stock.goods_receipt_draft',
+                sprintf('Goods receipt #%s saved as draft.', $receipt->receipt_id),
+                GoodsReceipt::class,
+                (int) $receipt->receipt_id,
+                null,
+                ['supplier_id' => $this->supplier_id, 'department_id' => $this->department_id],
+                ActivityLogModule::STOCK
+            );
+
+            session()->flash('message', 'Draft saved. It appears in the list below—use “Finish receipt” to confirm and update stock.');
+            $this->closeReceiptForm();
+            $this->loadReceipts();
+            $this->loadData();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            session()->flash('error', 'Could not save draft: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * Confirm receipt: posts lines to stock (PURCHASE movements). New receipts or finalizing a draft.
+     */
+    public function confirmReceipt(): void
+    {
+        if ($this->receiptReadOnly) {
+            return;
+        }
+
+        $this->recalculateReceiptItemTotals();
+        $this->validate([
+            'supplier_id' => 'required|exists:suppliers,supplier_id',
+            'department_id' => 'required|exists:departments,id',
+            'receipt_status' => 'required|in:PARTIAL,COMPLETE',
+            'receiptItems' => 'required|array|min:1',
+            'receiptItems.*.item_id' => 'required|exists:stocks,id',
             'receiptItems.*.quantity_received' => 'required|numeric|min:0.01',
             'receiptItems.*.unit_cost' => 'required|numeric|min:0',
         ]);
@@ -299,82 +523,43 @@ class GoodsReceipts extends Component
             return;
         }
 
-        // Resolve business date and shift
         $resolved = TimeAndShiftResolver::resolve();
 
         DB::beginTransaction();
         try {
-            // Create goods receipt
-            $receipt = GoodsReceipt::create([
-                'requisition_id' => $this->requisition_id,
-                'supplier_id' => $this->supplier_id,
-                'received_by' => Auth::id(),
-                'department_id' => $this->department_id,
-                'business_date' => $resolved['business_date'],
-                'shift_id' => $resolved['shift_id'],
-                'receipt_status' => $this->receipt_status,
-                'notes' => $this->notes,
-            ]);
-
-            // Create receipt items and update stock
-            foreach ($this->receiptItems as $itemData) {
-                $stock = Stock::find($itemData['item_id']);
-                
-                // Calculate total cost in purchase units
-                $totalCost = $itemData['quantity_received'] * $itemData['unit_cost'];
-
-                // Convert received quantity and unit cost to base (qty_unit) using package_size if defined
-                $packageSize = $stock->package_size && $stock->package_size > 0 ? (float) $stock->package_size : 1.0;
-                $receivedBaseQty = (float) $itemData['quantity_received'] * $packageSize;
-                $baseUnitPrice = $packageSize > 0 ? ((float) $itemData['unit_cost'] / $packageSize) : (float) $itemData['unit_cost'];
-                
-                // Create receipt item (keeps original purchase-unit quantity and cost)
-                $receiptItem = GoodsReceiptItem::create([
-                    'receipt_id' => $receipt->receipt_id,
-                    'item_id' => $itemData['item_id'],
-                    'location_id' => $itemData['location_id'],
-                    'quantity_received' => $itemData['quantity_received'],
-                    'unit_id' => $itemData['unit_id'] ?? null,
-                    'unit_cost' => $itemData['unit_cost'],
-                    'total_cost' => $totalCost,
-                    'notes' => $itemData['notes'] ?? null,
-                    'purchase_requisition_item_id' => $itemData['purchase_requisition_item_id'] ?? null,
-                ]);
-
-                // Update stock quantity (always in base units)
-                $stock->current_stock += $receivedBaseQty;
-                $stock->quantity = $stock->current_stock; // Sync legacy field
-                $stock->save();
-
-                // Create PURCHASE stock movement in base units
-                StockMovement::create([
-                    'stock_id' => $stock->id,
-                    'movement_type' => 'PURCHASE',
-                    'quantity' => $receivedBaseQty,
-                    'unit_price' => $baseUnitPrice,
-                    'total_value' => $totalCost,
-                    'from_department_id' => null,
-                    'to_department_id' => $this->department_id,
-                    'user_id' => Auth::id(),
-                    'shift_id' => $resolved['shift_id'],
-                    'business_date' => $resolved['business_date'],
-                    'notes' => 'Goods receipt #' . $receipt->receipt_id . ($itemData['notes'] ? '. ' . $itemData['notes'] : ''),
-                    'goods_receipt_item_id' => $receiptItem->line_id,
-                ]);
-
-                // If this receipt line came from a stock-request requisition, issue to requested location after stock is updated
-                if (!empty($receiptItem->purchase_requisition_item_id)) {
-                    $pri = PurchaseRequisitionItem::with('stockRequestItem.stockRequest')->find($receiptItem->purchase_requisition_item_id);
-                    if ($pri && $pri->stockRequestItem && $pri->stockRequestItem->issue_status === 'on_requisition') {
-                        try {
-                            StockRequestExecutionService::issueSingleItem($pri->stockRequestItem);
-                        } catch (\Throwable $e) {
-                            DB::rollBack();
-                            session()->flash('error', 'Stock updated but issue to requested location failed: ' . $e->getMessage());
-                            return;
-                        }
-                    }
+            if ($this->editingReceiptId) {
+                $receipt = GoodsReceipt::lockForUpdate()->findOrFail($this->editingReceiptId);
+                if ($receipt->receipt_status !== 'DRAFT') {
+                    throw new \RuntimeException('Only a draft receipt can be confirmed. Posted receipts cannot be re-confirmed.');
                 }
+                $receipt->update([
+                    'requisition_id' => $this->requisition_id,
+                    'supplier_id' => $this->supplier_id,
+                    'department_id' => $this->department_id,
+                    'business_date' => $resolved['business_date'],
+                    'shift_id' => $resolved['shift_id'],
+                    'receipt_status' => $this->receipt_status,
+                    'notes' => $this->notes,
+                ]);
+                GoodsReceiptItem::where('receipt_id', $receipt->receipt_id)->delete();
+            } else {
+                $receipt = GoodsReceipt::create([
+                    'requisition_id' => $this->requisition_id,
+                    'supplier_id' => $this->supplier_id,
+                    'received_by' => Auth::id(),
+                    'department_id' => $this->department_id,
+                    'business_date' => $resolved['business_date'],
+                    'shift_id' => $resolved['shift_id'],
+                    'receipt_status' => $this->receipt_status,
+                    'notes' => $this->notes,
+                ]);
+            }
+
+            foreach ($this->receiptItems as $itemData) {
+                if ((float) ($itemData['quantity_received'] ?? 0) < 0.01) {
+                    continue;
+                }
+                $this->appendGoodsReceiptLine($receipt, $itemData, $resolved, true);
             }
 
             DB::commit();
@@ -382,7 +567,7 @@ class GoodsReceipts extends Component
             ActivityLogger::log(
                 'stock.goods_receipt',
                 sprintf(
-                    'Goods receipt #%s recorded (%d line(s)).',
+                    'Goods receipt #%s confirmed (%d line(s)); stock updated.',
                     $receipt->receipt_id,
                     count($this->receiptItems)
                 ),
@@ -400,10 +585,77 @@ class GoodsReceipts extends Component
             session()->flash('message', 'Goods receipt confirmed and stock updated successfully!');
             $this->closeReceiptForm();
             $this->loadReceipts();
-            $this->loadData(); // Reload requisitions
-        } catch (\Exception $e) {
+            $this->loadData();
+        } catch (\Throwable $e) {
             DB::rollBack();
-            session()->flash('error', 'Error processing goods receipt: ' . $e->getMessage());
+            session()->flash('error', 'Error confirming goods receipt: '.$e->getMessage());
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $resolved  from TimeAndShiftResolver::resolve()
+     */
+    protected function appendGoodsReceiptLine(GoodsReceipt $receipt, array $itemData, array $resolved, bool $postToStock): void
+    {
+        $stock = Stock::findOrFail($itemData['item_id']);
+
+        $locationId = (int) ($itemData['location_id'] ?? 0);
+        if ($locationId <= 0) {
+            $locationId = (int) ($stock->stock_location_id ?? 0);
+        }
+        if ($locationId <= 0) {
+            $locationId = (int) (StockLocation::where('is_active', true)->where('is_main_location', true)->orderBy('name')->value('id') ?? 0);
+        }
+        if ($locationId <= 0) {
+            throw new \RuntimeException('No stock location is configured. Add a main stock location first.');
+        }
+
+        $totalCost = (float) $itemData['quantity_received'] * (float) $itemData['unit_cost'];
+
+        $packageSize = $stock->package_size && $stock->package_size > 0 ? (float) $stock->package_size : 1.0;
+        $receivedBaseQty = (float) $itemData['quantity_received'] * $packageSize;
+        $baseUnitPrice = $packageSize > 0 ? ((float) $itemData['unit_cost'] / $packageSize) : (float) $itemData['unit_cost'];
+
+        $receiptItem = GoodsReceiptItem::create([
+            'receipt_id' => $receipt->receipt_id,
+            'item_id' => $itemData['item_id'],
+            'location_id' => $locationId,
+            'quantity_received' => $itemData['quantity_received'],
+            'unit_id' => $itemData['unit_id'] ?? null,
+            'unit_cost' => $itemData['unit_cost'],
+            'total_cost' => $totalCost,
+            'notes' => $itemData['notes'] ?? null,
+            'purchase_requisition_item_id' => $itemData['purchase_requisition_item_id'] ?? null,
+        ]);
+
+        if (! $postToStock) {
+            return;
+        }
+
+        $stock->current_stock += $receivedBaseQty;
+        $stock->quantity = $stock->current_stock;
+        $stock->save();
+
+        StockMovement::create([
+            'stock_id' => $stock->id,
+            'movement_type' => 'PURCHASE',
+            'quantity' => $receivedBaseQty,
+            'unit_price' => $baseUnitPrice,
+            'total_value' => $totalCost,
+            'from_department_id' => null,
+            'to_department_id' => $this->department_id,
+            'user_id' => Auth::id(),
+            'shift_id' => $resolved['shift_id'],
+            'business_date' => $resolved['business_date'],
+            'notes' => 'Goods receipt #'.$receipt->receipt_id.($itemData['notes'] ? '. '.$itemData['notes'] : ''),
+            'goods_receipt_item_id' => $receiptItem->line_id,
+        ]);
+
+        if (! empty($receiptItem->purchase_requisition_item_id)) {
+            $pri = PurchaseRequisitionItem::with('stockRequestItem.stockRequest')->find($receiptItem->purchase_requisition_item_id);
+            if ($pri && $pri->stockRequestItem && $pri->stockRequestItem->issue_status === 'on_requisition') {
+                StockRequestExecutionService::issueSingleItem($pri->stockRequestItem);
+            }
         }
     }
 

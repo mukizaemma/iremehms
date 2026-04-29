@@ -85,7 +85,7 @@
                                             <select class="form-select" wire:model.defer="add_menu_item_id">
                                                 <option value="">Select item</option>
                                                 @foreach($this->filteredMenuItems as $mi)
-                                                    <option value="{{ $mi['menu_item_id'] }}">{{ $mi['name'] }} — {{ \App\Helpers\CurrencyHelper::format($mi['sale_price']) }}</option>
+                                                    <option value="{{ $mi['menu_item_id'] }}">{{ $mi['name'] }} ({{ ucfirst($mi['sales_category'] ?? 'food') }}) — {{ \App\Helpers\CurrencyHelper::format($mi['sale_price']) }}</option>
                                                 @endforeach
                                             </select>
                                         </div>
@@ -97,6 +97,14 @@
                                         </div>
                                     </div>
                                     <div class="row g-2 mt-1">
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Sales category</label>
+                                            <select class="form-select form-select-sm" wire:model.live="add_sales_category_filter">
+                                                <option value="">All</option>
+                                                <option value="food">Food</option>
+                                                <option value="beverage">Beverage</option>
+                                            </select>
+                                        </div>
                                         <div class="col-md-12">
                                             <label class="form-label small">Comment for kitchen/bar</label>
                                             <input type="text" class="form-control form-control-sm" wire:model.defer="add_item_notes" placeholder="e.g. no ice, extra lemon">
@@ -109,7 +117,7 @@
                                             @forelse($this->filteredMenuItems as $mi)
                                                 <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2">
                                                     <a href="#" class="text-decoration-none text-dark flex-grow-1" wire:click.prevent="selectMenuItemForAdd({{ $mi['menu_item_id'] }})">
-                                                        {{ $mi['name'] }} <span class="text-muted small">— {{ \App\Helpers\CurrencyHelper::format($mi['sale_price']) }}</span>
+                                                        {{ $mi['name'] }} <span class="text-muted small">({{ ucfirst($mi['sales_category'] ?? 'food') }}) — {{ \App\Helpers\CurrencyHelper::format($mi['sale_price']) }}</span>
                                                     </a>
                                                     <button type="button" class="btn btn-sm btn-outline-success ms-2" wire:click="quickAddItem({{ $mi['menu_item_id'] }}, 1)" title="Add 1">+1</button>
                                                 </div>

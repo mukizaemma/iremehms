@@ -47,6 +47,7 @@ Route::post('/logout', function () {
     Auth::logout();
     request()->session()->invalidate();
     request()->session()->regenerateToken();
+
     return redirect()->route('login');
 })->middleware('auth')->name('logout');
 
@@ -89,6 +90,7 @@ Route::post('/switch-role', function () {
     }
     // Reset sidebar context so the new role sees only its own module menu
     request()->session()->forget('selected_module');
+
     return redirect()->route('dashboard');
 })->middleware('auth')->name('switch-role');
 
@@ -119,7 +121,10 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/stock-movements', \App\Livewire\StockMovements::class)->name('stock.movements');
     Route::get('/stock-out', \App\Livewire\StockOut::class)->name('stock.out');
     Route::get('/stock-reports', \App\Livewire\StockReports::class)->name('stock.reports');
+    Route::get('/stock-daily-by-category', \App\Livewire\StockCategoryDailyReport::class)->name('stock.daily-by-category');
+    Route::get('/stock-daily-selling-location', \App\Livewire\StockSellingLocationDailyReport::class)->name('stock.daily-selling-location');
     Route::get('/stock-opening-closing-report', \App\Livewire\StockOpeningClosingReport::class)->name('stock.opening-closing-report');
+    Route::get('/stock-location-activity-report', \App\Livewire\StockLocationActivityReport::class)->name('stock.location-activity-report');
     Route::get('/stock-requisitions', \App\Livewire\StockRequisitions::class)->name('stock.requisitions');
     Route::get('/stock-requests', \App\Livewire\StockRequests::class)->name('stock.requests');
     Route::get('/stock-locations', \App\Livewire\StockLocationManagement::class)->name('stock.locations');
@@ -160,7 +165,7 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/restaurant/waiters', \App\Livewire\RestaurantWaiters::class)->name('restaurant.waiters');
     Route::get('/restaurant/preparation-stations', \App\Livewire\PreparationStationsManagement::class)->name('restaurant.preparation-stations');
     Route::get('/restaurant/posting-stations', \App\Livewire\PreparationStationsManagement::class)->name('restaurant.posting-stations');
-    
+
     // Front Office - Dashboard, Add Reservation & Rooms management
     Route::get('/front-office/hub', \App\Livewire\FrontOffice\FrontOfficeHub::class)->name('front-office.hub');
     Route::get('/front-office/dashboard', \App\Livewire\FrontOffice\FrontOfficeDashboard::class)->name('front-office.dashboard');
@@ -202,11 +207,16 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/front-office/proforma-line-defaults', \App\Livewire\FrontOffice\ProformaLineDefaults::class)->name('front-office.proforma-line-defaults');
     Route::get('/front-office/wellness', \App\Livewire\FrontOffice\WellnessManagement::class)->name('front-office.wellness');
 
-    // Subscription invoice (hotel users can view their own)
+    // Subscription invoice (Super Admin only; same access as Hotel Subscription page)
     Route::get('/subscription-invoice/{invoice}', function (App\Models\SubscriptionInvoice $invoice) {
-        if (auth()->user()->hotel_id != $invoice->hotel_id) {
+        $user = auth()->user();
+        if (! $user || ! $user->isEffectiveSuperAdmin()) {
+            abort(403, 'Subscription invoices are only available to Super Admin.');
+        }
+        if ($user->hotel_id != $invoice->hotel_id) {
             abort(403);
         }
+
         return view('subscription-invoice', ['invoice' => $invoice->load('hotel')]);
     })->middleware('auth', 'hotel')->name('subscription.invoice.show');
 

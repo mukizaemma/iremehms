@@ -18,6 +18,7 @@ class MenuItem extends Model
     protected $fillable = [
         'category_id',
         'menu_item_type_id',
+        'sales_category',
         'name',
         'code',
         'description',
@@ -116,6 +117,7 @@ class MenuItem extends Model
         if (array_key_exists('allows_bom', $this->getAttributes())) {
             return (bool) $this->allows_bom;
         }
+
         return $this->menuItemType && $this->menuItemType->allows_bom;
     }
 

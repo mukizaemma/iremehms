@@ -4,10 +4,11 @@ namespace App\Services;
 
 use App\Models\Hotel;
 use App\Models\Stock;
+use App\Models\StockLocation;
 use App\Models\StockMovement;
 use App\Models\StockRequest;
 use App\Models\StockRequestItem;
-use App\Models\StockLocation;
+use App\Support\ActivityLogModule;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -18,7 +19,7 @@ class StockRequestExecutionService
      */
     public static function execute(StockRequest $request): void
     {
-        if (!$request->isApproved()) {
+        if (! $request->isApproved()) {
             throw new \InvalidArgumentException('Only approved requests can be executed.');
         }
 
@@ -56,7 +57,7 @@ class StockRequestExecutionService
         }
 
         $request = $item->stockRequest;
-        if (!$request || !$request->isApproved()) {
+        if (! $request || ! $request->isApproved()) {
             return false;
         }
         $remaining = (float) $item->quantity - (float) ($item->quantity_issued ?? 0);
@@ -64,7 +65,7 @@ class StockRequestExecutionService
             return false;
         }
         $mainStock = Stock::with('stockLocation')->find($item->stock_id);
-        if (!$mainStock) {
+        if (! $mainStock) {
             return false;
         }
         $available = (float) ($mainStock->current_stock ?? $mainStock->quantity ?? 0);
@@ -86,6 +87,22 @@ class StockRequestExecutionService
         $item->quantity_issued = (float) ($item->quantity_issued ?? 0) + $qtyToIssue;
         $item->issue_status = $item->quantity_issued >= (float) $item->quantity ? 'issued' : 'partial';
         $item->save();
+
+        $item->loadMissing('stock');
+        ActivityLogger::log(
+            'stock_request_issue',
+            'Issued '.$qtyToIssue.' '.$mainStock->name.' (stock request #'.$request->id.', line '.$item->id.').',
+            StockRequestItem::class,
+            $item->id,
+            null,
+            [
+                'quantity_issued' => (float) $item->quantity_issued,
+                'issue_status' => $item->issue_status,
+                'stock_request_id' => $request->id,
+            ],
+            ActivityLogModule::STOCK
+        );
+
         return true;
     }
 
@@ -96,12 +113,12 @@ class StockRequestExecutionService
     ): void {
         $mainStock = Stock::with('stockLocation')->find($item->stock_id);
         $toLocationId = $item->to_stock_location_id ?? $item->stockRequest->to_stock_location_id;
-        if (!$mainStock || !$toLocationId) {
+        if (! $mainStock || ! $toLocationId) {
             return;
         }
 
         $subLocation = StockLocation::find($toLocationId);
-        if (!$subLocation || !$subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stock_location_id) {
+        if (! $subLocation || ! $subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stock_location_id) {
             return;
         }
 
@@ -115,14 +132,15 @@ class StockRequestExecutionService
             ->where('item_type_id', $mainStock->item_type_id)
             ->first();
 
-        if (!$subStock) {
+        if (! $subStock) {
             $subStock = Stock::create([
                 'name' => $mainStock->name,
-                'code' => $mainStock->code . '_' . $subLocation->code,
+                'code' => $mainStock->code.'_'.$subLocation->code,
                 'description' => $mainStock->description,
                 'use_barcode' => $mainStock->use_barcode,
                 'barcode' => null,
                 'item_type_id' => $mainStock->item_type_id,
+                'inventory_category' => $mainStock->inventory_category,
                 'package_unit' => $mainStock->package_unit,
                 'package_size' => $mainStock->package_size,
                 'qty_unit' => $mainStock->qty_unit,
@@ -153,7 +171,7 @@ class StockRequestExecutionService
                 'user_id' => $approvedById,
                 'shift_id' => $resolved['shift_id'],
                 'business_date' => $resolved['business_date'],
-                'notes' => 'Transfer to sub-location: ' . $subLocation->name . ' (stock request).',
+                'notes' => 'Transfer to sub-location: '.$subLocation->name.' (stock request).',
             ]);
 
             StockMovement::create([
@@ -167,7 +185,7 @@ class StockRequestExecutionService
                 'user_id' => $approvedById,
                 'shift_id' => $resolved['shift_id'],
                 'business_date' => $resolved['business_date'],
-                'notes' => 'Transfer from main: ' . $mainStock->stockLocation->name . ' (stock request).',
+                'notes' => 'Transfer from main: '.$mainStock->stockLocation->name.' (stock request).',
             ]);
 
             $mainStock->current_stock -= $qty;
@@ -188,25 +206,26 @@ class StockRequestExecutionService
     ): void {
         $mainStock = Stock::with('stockLocation')->find($item->stock_id);
         $toLocationId = $item->to_stock_location_id ?? $item->stockRequest->to_stock_location_id;
-        if (!$mainStock || !$toLocationId || $qty <= 0) {
+        if (! $mainStock || ! $toLocationId || $qty <= 0) {
             return;
         }
         $subLocation = StockLocation::find($toLocationId);
-        if (!$subLocation || !$subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stock_location_id) {
+        if (! $subLocation || ! $subLocation->isSubLocation() || $subLocation->parent_location_id != $mainStock->stock_location_id) {
             return;
         }
         $subStock = Stock::where('name', $mainStock->name)
             ->where('stock_location_id', $subLocation->id)
             ->where('item_type_id', $mainStock->item_type_id)
             ->first();
-        if (!$subStock) {
+        if (! $subStock) {
             $subStock = Stock::create([
                 'name' => $mainStock->name,
-                'code' => $mainStock->code . '_' . $subLocation->code,
+                'code' => $mainStock->code.'_'.$subLocation->code,
                 'description' => $mainStock->description,
                 'use_barcode' => $mainStock->use_barcode,
                 'barcode' => null,
                 'item_type_id' => $mainStock->item_type_id,
+                'inventory_category' => $mainStock->inventory_category,
                 'package_unit' => $mainStock->package_unit,
                 'package_size' => $mainStock->package_size,
                 'qty_unit' => $mainStock->qty_unit,
@@ -236,7 +255,7 @@ class StockRequestExecutionService
                 'user_id' => $userId,
                 'shift_id' => $resolved['shift_id'],
                 'business_date' => $resolved['business_date'],
-                'notes' => 'Transfer to sub-location: ' . $subLocation->name . ' (Stock Out).',
+                'notes' => 'Transfer to sub-location: '.$subLocation->name.' (Stock Out).',
             ]);
             StockMovement::create([
                 'stock_id' => $subStock->id,
@@ -249,7 +268,7 @@ class StockRequestExecutionService
                 'user_id' => $userId,
                 'shift_id' => $resolved['shift_id'],
                 'business_date' => $resolved['business_date'],
-                'notes' => 'Transfer from main: ' . $mainStock->stockLocation->name . ' (Stock Out).',
+                'notes' => 'Transfer from main: '.$mainStock->stockLocation->name.' (Stock Out).',
             ]);
             $mainStock->current_stock -= $qty;
             $mainStock->quantity = $mainStock->current_stock;
@@ -269,7 +288,7 @@ class StockRequestExecutionService
     ): void {
         $mainStock = Stock::with('stockLocation')->find($item->stock_id);
         $toDepartmentId = $item->to_department_id ?? $request->to_department_id;
-        if (!$mainStock || !$toDepartmentId || $qty <= 0) {
+        if (! $mainStock || ! $toDepartmentId || $qty <= 0) {
             return;
         }
         DB::transaction(function () use ($mainStock, $qty, $resolved, $userId, $toDepartmentId) {
@@ -300,7 +319,7 @@ class StockRequestExecutionService
     ): void {
         $mainStock = Stock::with('stockLocation')->find($item->stock_id);
         $toDepartmentId = $item->to_department_id ?? $request->to_department_id;
-        if (!$mainStock || !$toDepartmentId) {
+        if (! $mainStock || ! $toDepartmentId) {
             return;
         }
 
@@ -334,7 +353,7 @@ class StockRequestExecutionService
     {
         $stock = Stock::find($item->stock_id);
         $data = $item->edit_data;
-        if (!$stock || !is_array($data) || empty($data)) {
+        if (! $stock || ! is_array($data) || empty($data)) {
             return;
         }
 
@@ -345,7 +364,7 @@ class StockRequestExecutionService
                 $updates[$field] = $data[$field];
             }
         }
-        if (!empty($updates)) {
+        if (! empty($updates)) {
             $stock->update($updates);
         }
     }

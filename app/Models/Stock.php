@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Stock extends Model
 {
@@ -20,6 +19,7 @@ class Stock extends Model
         'unit_price',
         'department_id',
         'item_type_id',
+        'inventory_category',
         'is_sellable',
         'is_consumable',
         'tracking_method',
@@ -95,6 +95,7 @@ class Stock extends Model
         if ($this->is_sellable !== null) {
             return $this->is_sellable;
         }
+
         return $this->itemType?->is_sellable ?? false;
     }
 
@@ -106,6 +107,7 @@ class Stock extends Model
         if ($this->is_consumable !== null) {
             return $this->is_consumable;
         }
+
         return $this->itemType?->is_consumable ?? true;
     }
 
@@ -114,9 +116,10 @@ class Stock extends Model
      */
     public function allowsMovementType(string $movementType): bool
     {
-        if (!$this->itemType) {
+        if (! $this->itemType) {
             return false; // Item type is mandatory
         }
+
         return $this->itemType->allowsMovementType($movementType);
     }
 
@@ -129,4 +132,39 @@ class Stock extends Model
         return false; // Hard block - no negative stock allowed
     }
 
+    /** Below safety stock, or at/below reorder level (when set). */
+    public function isLowStock(): bool
+    {
+        $qty = (float) ($this->current_stock ?? $this->quantity ?? 0);
+        if ((float) ($this->safety_stock ?? 0) > 0 && $qty < (float) $this->safety_stock) {
+            return true;
+        }
+        if ($this->reorder_level !== null && $qty <= (float) $this->reorder_level) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /** Past expiry with quantity on hand. */
+    public function isExpiredAtRisk(): bool
+    {
+        if (! ($this->use_expiration ?? false) || ! $this->expiration_date) {
+            return false;
+        }
+        $qty = (float) ($this->current_stock ?? $this->quantity ?? 0);
+        if ($qty <= 0) {
+            return false;
+        }
+
+        return $this->expiration_date->copy()->startOfDay()->lt(now()->copy()->startOfDay());
+    }
+
+    /** Current quantity × purchase price (inventory valuation at cost). */
+    public function purchaseLineValue(): float
+    {
+        $qty = (float) ($this->current_stock ?? $this->quantity ?? 0);
+
+        return round($qty * (float) ($this->purchase_price ?? 0), 2);
+    }
 }

@@ -169,14 +169,26 @@
                             </div>
 
                             <h6 class="mb-3">Requisition Items</h6>
+                            <div class="row g-2 mb-2">
+                                <div class="col-md-4">
+                                    <label class="form-label small text-muted mb-0">Inventory category (picker)</label>
+                                    <select class="form-select form-select-sm" wire:model.live="pickerInventoryCategory">
+                                        <option value="">All categories</option>
+                                        @foreach(\App\Enums\InventoryCategory::ordered() as $invCat)
+                                            <option value="{{ $invCat->value }}">{{ $invCat->label() }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                            </div>
                             <div class="table-responsive mb-3">
                                 <table class="table table-sm">
                                     <thead>
                                         <tr>
                                             <th>Item</th>
                                             <th>Location</th>
-                                            <th>Quantity</th>
-                                            <th>Unit</th>
+                                            <th>Requested (base)</th>
+                                            <th>Purchase qty</th>
+                                            <th>Base unit</th>
                                             <th>Est. Unit Cost</th>
                                             <th>Total</th>
                                             <th>Expiry</th>
@@ -192,14 +204,37 @@
                                                     ? \Carbon\Carbon::parse($expiry)->format('Y-m-d')
                                                     : '—';
                                             @endphp
-                                            <tr>
-                                                <td>
-                                                    <select class="form-select form-select-sm" wire:model.live="requisitionItems.{{ $index }}.item_id" required>
-                                                        <option value="">Select Item</option>
-                                                        @foreach($stocks as $stock)
-                                                            <option value="{{ $stock->id }}">{{ $stock->name }}</option>
+                                            <tr wire:key="pr-item-{{ $index }}-{{ $item['item_id'] ?? 'x' }}">
+                                                <td style="min-width: 14rem;">
+                                                    <label class="form-label small text-muted mb-0">Item</label>
+                                                    <input
+                                                        type="text"
+                                                        class="form-control form-control-sm mb-1"
+                                                        placeholder="Type to filter the list…"
+                                                        autocomplete="off"
+                                                        wire:model.live.debounce.100ms="requisitionItemSearch.{{ $index }}"
+                                                    >
+                                                    <select
+                                                        class="form-select form-select-sm"
+                                                        wire:model.live="requisitionItems.{{ $index }}.item_id"
+                                                        wire:change="onItemRowCommitted({{ $index }})"
+                                                    >
+                                                        <option value="">Select item</option>
+                                                        @foreach($this->filteredStocksForRow($index) as $stock)
+                                                            @php
+                                                                $invCat = \App\Enums\InventoryCategory::tryFrom((string) ($stock->inventory_category ?? ''));
+                                                                $invLabel = $invCat?->label() ?? 'Uncategorized';
+                                                                $unitText = $stock->qty_unit ?? $stock->unit ?? '';
+                                                                $pkgText = ((float)($stock->package_size ?? 0) > 0 && ($stock->package_unit ?? '') !== '')
+                                                                    ? (' · 1 '.$stock->package_unit.' = '.rtrim(rtrim(number_format((float)$stock->package_size,4), '0'), '.').' '.$unitText)
+                                                                    : '';
+                                                            @endphp
+                                                            <option value="{{ $stock->id }}">{{ $stock->name }} — {{ $invLabel }}{{ $pkgText }}</option>
                                                         @endforeach
                                                     </select>
+                                                    @if($loop->last)
+                                                        <span class="text-muted small d-block mt-1">List filters as you type. Choosing an item here adds the next line.</span>
+                                                    @endif
                                                 </td>
                                                 <td>
                                                     <span class="text-muted">
@@ -207,46 +242,36 @@
                                                     </span>
                                                 </td>
                                                 <td>
-                                                    <input type="number" step="0.01" min="0.01" class="form-control form-control-sm" wire:model.defer="requisitionItems.{{ $index }}.quantity_requested" required>
+                                                    <span class="text-muted">
+                                                        {{ number_format((float)($item['quantity_requested'] ?? 0), 4) }}
+                                                    </span>
                                                 </td>
                                                 <td>
-                                                    <select class="form-select form-select-sm" wire:model.defer="requisitionItems.{{ $index }}.unit_id">
-                                                        <option value="">Select Unit</option>
-                                                        <option value="pcs">pcs - Pieces</option>
-                                                        <option value="kg">kg - Kilograms</option>
-                                                        <option value="g">g - Grams</option>
-                                                        <option value="l">l - Liters</option>
-                                                        <option value="ml">ml - Milliliters</option>
-                                                        <option value="m">m - Meters</option>
-                                                        <option value="cm">cm - Centimeters</option>
-                                                        <option value="m²">m² - Square Meters</option>
-                                                        <option value="m³">m³ - Cubic Meters</option>
-                                                        <option value="dozen">dozen - Dozen</option>
-                                                        <option value="pair">pair - Pair</option>
-                                                        <option value="set">set - Set</option>
-                                                        <option value="roll">roll - Roll</option>
-                                                        <option value="sheet">sheet - Sheet</option>
-                                                        <option value="unit">unit - Unit</option>
-                                                        <option value="box">box - Box</option>
-                                                        <option value="bottle">bottle - Bottle</option>
-                                                        <option value="can">can - Can</option>
-                                                        <option value="pack">pack - Pack</option>
-                                                        <option value="bag">bag - Bag</option>
-                                                        <option value="carton">carton - Carton</option>
-                                                        <option value="case">case - Case</option>
-                                                        <option value="barrel">barrel - Barrel</option>
-                                                        <option value="drum">drum - Drum</option>
-                                                        <option value="gallon">gallon - Gallon</option>
-                                                        <option value="ounce">ounce - Ounce</option>
-                                                        <option value="pound">pound - Pound</option>
-                                                        <option value="ton">ton - Ton</option>
-                                                    </select>
+                                                    @php
+                                                        $selected = collect($stocks)->firstWhere('id', (int)($item['item_id'] ?? 0));
+                                                        $pkgSize = (float) ($selected->package_size ?? 0);
+                                                        $usesPkg = $selected && $pkgSize > 0 && ($selected->package_unit ?? '') !== '';
+                                                        $effectiveQty = $usesPkg
+                                                            ? ((float) ($item['quantity_packages'] ?? 0) * $pkgSize)
+                                                            : (float) ($item['quantity_requested'] ?? 0);
+                                                    @endphp
+                                                    @if($usesPkg)
+                                                        <label class="form-label small text-muted mb-0">Packages ({{ $selected->package_unit }})</label>
+                                                        <input type="number" step="0.0001" min="0.0001" class="form-control form-control-sm" wire:model.defer="requisitionItems.{{ $index }}.quantity_packages">
+                                                        <small class="text-muted">Base: {{ number_format($effectiveQty, 4) }} {{ $selected->qty_unit ?? $selected->unit ?? '' }}</small>
+                                                    @else
+                                                        <label class="form-label small text-muted mb-0">Base quantity</label>
+                                                        <input type="number" step="0.01" min="0.01" class="form-control form-control-sm" wire:model.defer="requisitionItems.{{ $index }}.quantity_requested" required>
+                                                    @endif
+                                                </td>
+                                                <td>
+                                                    <span class="text-muted">{{ $selected->qty_unit ?? $selected->unit ?? ($item['unit_id'] ?? '—') }}</span>
                                                 </td>
                                                 <td>
                                                     <input type="number" step="0.01" min="0" class="form-control form-control-sm" wire:model.defer="requisitionItems.{{ $index }}.estimated_unit_cost">
                                                 </td>
                                                 <td>
-                                                    {{ \App\Helpers\CurrencyHelper::format(($item['quantity_requested'] ?? 0) * ($item['estimated_unit_cost'] ?? 0)) }}
+                                                    {{ \App\Helpers\CurrencyHelper::format($effectiveQty * ((float)($item['estimated_unit_cost'] ?? 0))) }}
                                                 </td>
                                                 <td>
                                                     {{ $expiryFormatted }}
@@ -290,12 +315,12 @@
         <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1050; overflow-y: auto;">
             <div class="modal-dialog modal-dialog-centered modal-xl">
                 <div class="modal-content" style="z-index: 1051;">
-                    <div class="modal-header">
+                    <div class="modal-header no-print">
                         <h5 class="modal-title">Requisition #{{ $showViewRequisitionId }} — View / Print / Share</h5>
                         <button type="button" class="btn-close" wire:click="closeViewRequisition"></button>
                     </div>
-                    <div class="modal-body">
-                        <div id="requisition-print-area">
+                    <div class="modal-body requisition-view-modal-body">
+                        <div id="requisition-print-area" class="requisition-print-document">
                             @php $r = $viewRequisitionData; @endphp
                             @php $hotelDoc = \App\Models\Hotel::getHotel(); @endphp
                             @if($hotelDoc)
@@ -391,11 +416,141 @@
                 </div>
             </div>
         </div>
+        <style>
+            /* Screen: keep modal body comfortable */
+            .requisition-view-modal-body {
+                max-height: min(70vh, 720px);
+                overflow-y: auto;
+            }
+        </style>
         <style media="print">
-            body * { visibility: hidden; }
-            .modal.show .modal-dialog, #requisition-print-area, #requisition-print-area * { visibility: visible; }
-            #requisition-print-area { position: absolute; left: 0; top: 0; width: 100%; }
-            .no-print, .modal-header .btn-close, .modal-footer { display: none !important; }
+            @page {
+                size: A4 portrait;
+                /* Comfortable margins on the physical page (browser print preview “paper”) */
+                margin: 18mm 16mm 20mm 16mm;
+            }
+            html, body {
+                width: 100% !important;
+                height: auto !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #fff !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            /* Only show the requisition document */
+            body * {
+                visibility: hidden !important;
+            }
+            #requisition-print-area,
+            #requisition-print-area * {
+                visibility: visible !important;
+            }
+            /* Expand modal to full paper width (fixes tiny bottom-left print) */
+            .modal.show {
+                position: absolute !important;
+                inset: 0 !important;
+                overflow: visible !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                background: #fff !important;
+            }
+            .modal.show .modal-dialog {
+                max-width: none !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                transform: none !important;
+                min-height: 0 !important;
+                display: block !important;
+                align-items: unset !important;
+            }
+            .modal.show .modal-content {
+                border: none !important;
+                box-shadow: none !important;
+                border-radius: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            .modal.show .requisition-view-modal-body {
+                max-height: none !important;
+                overflow: visible !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 0 !important;
+            }
+            #requisition-print-area {
+                position: relative !important;
+                left: auto !important;
+                top: auto !important;
+                box-sizing: border-box !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                /* Extra breathing room inside the page box (does not replace @page margins) */
+                padding: 8mm 6mm 10mm 6mm !important;
+                font-size: 11pt !important;
+                line-height: 1.45 !important;
+                color: #000 !important;
+            }
+            #requisition-print-area .hotel-document-header img {
+                max-height: 56px !important;
+                max-width: 200px !important;
+            }
+            #requisition-print-area .table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: fixed;
+                font-size: 10pt !important;
+                border-collapse: collapse !important;
+            }
+            #requisition-print-area .table th,
+            #requisition-print-area .table td {
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+                padding: 0.4rem 0.45rem !important;
+                vertical-align: top !important;
+            }
+            /* Approximate column weights so the grid uses full page width */
+            #requisition-print-area .table th:nth-child(1),
+            #requisition-print-area .table td:nth-child(1) { width: 18%; }
+            #requisition-print-area .table th:nth-child(2),
+            #requisition-print-area .table td:nth-child(2) { width: 14%; }
+            #requisition-print-area .table th:nth-child(3),
+            #requisition-print-area .table td:nth-child(3) { width: 9%; }
+            #requisition-print-area .table th:nth-child(4),
+            #requisition-print-area .table td:nth-child(4) { width: 8%; }
+            #requisition-print-area .table th:nth-child(5),
+            #requisition-print-area .table td:nth-child(5) { width: 14%; }
+            #requisition-print-area .table th:nth-child(6),
+            #requisition-print-area .table td:nth-child(6) { width: 14%; }
+            #requisition-print-area .table th:nth-child(7),
+            #requisition-print-area .table td:nth-child(7) { width: 10%; }
+            #requisition-print-area .table th:nth-child(8),
+            #requisition-print-area .table td:nth-child(8) { width: 13%; }
+            #requisition-print-area .row {
+                margin-left: 0 !important;
+                margin-right: 0 !important;
+                width: 100% !important;
+            }
+            #requisition-print-area .row.mt-4 {
+                display: flex !important;
+                flex-wrap: nowrap !important;
+                justify-content: space-between !important;
+                gap: 0.75rem !important;
+            }
+            #requisition-print-area [class*="col-"] {
+                flex: 1 1 0 !important;
+                max-width: none !important;
+                width: auto !important;
+                padding-left: 0.35rem !important;
+                padding-right: 0.35rem !important;
+            }
+            .no-print,
+            .modal-header,
+            .modal-footer {
+                display: none !important;
+            }
         </style>
     @endif
 

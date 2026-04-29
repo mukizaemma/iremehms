@@ -2,15 +2,15 @@
 
 namespace App\Livewire;
 
+use App\Enums\SalesCategory;
+use App\Helpers\CurrencyHelper;
 use App\Models\MenuCategory;
 use App\Models\MenuItem;
+use App\Models\MenuItemOption;
+use App\Models\MenuItemOptionGroup;
 use App\Models\MenuItemType;
 use App\Models\PreparationStation;
-use App\Models\MenuItemOptionGroup;
-use App\Models\MenuItemOption;
-use App\Helpers\CurrencyHelper;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Validation\Rule;
 use Livewire\Component;
 use Livewire\WithFileUploads;
@@ -20,45 +20,69 @@ class MenuManagement extends Component
     use WithFileUploads;
 
     public $menuItems = [];
+
     public $categories = [];
+
     public $menuItemTypes = [];
+
     public $showMenuItemForm = false;
+
     public $editingMenuItemId = null;
-    
+
     // Form fields
     public $name = '';
+
     public $code = '';
+
     public $description = '';
+
     public $category_id = null;
+
     public $menu_item_type_id = null;
+
+    public string $sales_category = 'food';
+
     public $sale_price = 0;
+
     public $menu_cost = null; // cost per unit (optional; used with sale_price for margin)
+
     public $currency = 'RWF';
+
     public $sale_unit = 'pcs';
+
     public $is_active = true;
+
     public $allows_bom = true;
+
     public $display_order = 0;
+
     public $preparation_station = null; // slug (legacy) or id – required; one station from DB
+
     public $preparation_station_id = null; // preferred: ID from preparation_stations table
+
     public $image;
+
     public $imagePreview;
 
     /** Per-menu-item POS option groups (for waiters to choose from). */
     public array $optionGroups = [];
-    
+
     // Filters
     public $search = '';
+
     public $filter_category = '';
+
     public $filter_type = '';
+
     public $filter_active = '';
 
     // Available units (same as stock management)
     public $availableUnits = [
-        'pcs', 'kg', 'g', 'l', 'ml', 'm', 'cm', 'm²', 'm³', 
-        'dozen', 'pair', 'set', 'roll', 'sheet', 'unit', 
-        'box', 'bottle', 'can', 'pack', 'bag', 'carton', 
+        'pcs', 'kg', 'g', 'l', 'ml', 'm', 'cm', 'm²', 'm³',
+        'dozen', 'pair', 'set', 'roll', 'sheet', 'unit',
+        'box', 'bottle', 'can', 'pack', 'bag', 'carton',
         'case', 'barrel', 'drum', 'gallon', 'ounce', 'pound', 'ton',
-        'plate', 'serving', 'portion', 'cup', 'bowl'
+        'plate', 'serving', 'portion', 'cup', 'bowl',
     ];
 
     public function mount()
@@ -68,7 +92,7 @@ class MenuManagement extends Component
         $restaurantModule = \App\Models\Module::where('slug', 'restaurant')->first();
         $canAccess = $user->isSuperAdmin() || $user->isManager() || $user->isRestaurantManager()
             || ($restaurantModule && $user->hasModuleAccess($restaurantModule->id) && $user->hasPermission('back_office_menu_items'));
-        if (!$canAccess) {
+        if (! $canAccess) {
             abort(403, 'Unauthorized. Menu management requires restaurant access and the "Manage menu items" permission.');
         }
 
@@ -79,13 +103,14 @@ class MenuManagement extends Component
         if (request()->has('filter_type')) {
             $this->filter_type = (string) request()->get('filter_type');
         }
-        
+
         $this->loadData();
     }
 
     public function getUseBomForMenuItemsProperty(): bool
     {
         $hotel = \App\Models\Hotel::getHotel();
+
         return (bool) ($hotel->use_bom_for_menu_items ?? true);
     }
 
@@ -108,38 +133,38 @@ class MenuManagement extends Component
     public function loadMenuItems()
     {
         $query = MenuItem::with(['category', 'menuItemType', 'activeBillOfMenuRelation']);
-        
+
         // Filter by category
         if ($this->filter_category) {
             $query->where('category_id', $this->filter_category);
         }
-        
+
         // Filter by type
         if ($this->filter_type) {
             $query->where('menu_item_type_id', $this->filter_type);
         }
-        
+
         // Filter by active status
         if ($this->filter_active !== '') {
             $query->where('is_active', $this->filter_active === '1');
         }
-        
+
         // Search
         if ($this->search) {
-            $query->where(function($q) {
-                $q->where('name', 'like', '%' . $this->search . '%')
-                  ->orWhere('code', 'like', '%' . $this->search . '%')
-                  ->orWhere('description', 'like', '%' . $this->search . '%');
+            $query->where(function ($q) {
+                $q->where('name', 'like', '%'.$this->search.'%')
+                    ->orWhere('code', 'like', '%'.$this->search.'%')
+                    ->orWhere('description', 'like', '%'.$this->search.'%');
             });
         }
-        
+
         $this->menuItems = $query->orderBy('display_order')->orderBy('name')->get()->toArray();
     }
 
     public function openMenuItemForm($menuItemId = null)
     {
         $this->editingMenuItemId = $menuItemId;
-        
+
         if ($menuItemId) {
             $menuItem = MenuItem::find($menuItemId);
             $this->name = $menuItem->name;
@@ -147,6 +172,9 @@ class MenuManagement extends Component
             $this->description = $menuItem->description ?? '';
             $this->category_id = $menuItem->category_id;
             $this->menu_item_type_id = $menuItem->menu_item_type_id;
+            $this->sales_category = $menuItem->sales_category
+                ? (string) $menuItem->sales_category
+                : SalesCategory::Food->value;
             $this->sale_price = $menuItem->sale_price;
             $this->menu_cost = $menuItem->menu_cost !== null ? (float) $menuItem->menu_cost : null;
             $this->currency = $menuItem->currency ?? CurrencyHelper::getCurrency();
@@ -191,7 +219,7 @@ class MenuManagement extends Component
         } else {
             $this->resetForm();
         }
-        
+
         $this->showMenuItemForm = true;
     }
 
@@ -215,6 +243,7 @@ class MenuManagement extends Component
         $this->description = '';
         $this->category_id = null;
         $this->menu_item_type_id = null;
+        $this->sales_category = SalesCategory::Food->value;
         $this->sale_price = 0;
         $this->menu_cost = null;
         $this->currency = CurrencyHelper::getCurrency();
@@ -280,6 +309,7 @@ class MenuManagement extends Component
             'description' => 'nullable|string',
             'category_id' => 'required|exists:menu_categories,category_id',
             'menu_item_type_id' => 'required|exists:menu_item_types,type_id',
+            'sales_category' => 'required|in:food,beverage',
             'sale_price' => 'required|numeric|min:0',
             'menu_cost' => 'nullable|numeric|min:0',
             'currency' => 'required|string|size:3',
@@ -296,6 +326,7 @@ class MenuManagement extends Component
             'description' => $this->description,
             'category_id' => $this->category_id,
             'menu_item_type_id' => $this->menu_item_type_id,
+            'sales_category' => $this->sales_category,
             'sale_price' => $this->sale_price,
             'menu_cost' => $this->menu_cost !== null && $this->menu_cost !== '' ? (float) $this->menu_cost : null,
             'currency' => CurrencyHelper::getCurrency(),
@@ -319,7 +350,7 @@ class MenuManagement extends Component
                     \Illuminate\Support\Facades\Storage::disk('public')->delete($oldMenuItem->image);
                 }
             }
-            
+
             $imagePath = $this->image->store('menu-items', 'public');
             $menuItemData['image'] = $imagePath;
             $this->imagePreview = \Illuminate\Support\Facades\Storage::url($imagePath);
@@ -347,21 +378,23 @@ class MenuManagement extends Component
     {
         if (! Auth::user()->isSuperAdmin()) {
             session()->flash('error', 'Only Super Admin can delete menu items. You can deactivate instead.');
+
             return;
         }
         $menuItem = MenuItem::find($menuItemId);
-        
+
         // Check if menu item has BoM
         if ($menuItem->billOfMenus()->count() > 0) {
             session()->flash('error', 'Cannot delete menu item. It has Bill of Menu associated with it. Please delete the BoM first.');
+
             return;
         }
-        
+
         // Delete image if exists
         if ($menuItem->image && \Illuminate\Support\Facades\Storage::disk('public')->exists($menuItem->image)) {
             \Illuminate\Support\Facades\Storage::disk('public')->delete($menuItem->image);
         }
-        
+
         $menuItem->delete();
         session()->flash('message', 'Menu item deleted successfully!');
         $this->loadMenuItems();
@@ -370,7 +403,7 @@ class MenuManagement extends Component
     public function toggleActive($menuItemId)
     {
         $menuItem = MenuItem::find($menuItemId);
-        $menuItem->is_active = !$menuItem->is_active;
+        $menuItem->is_active = ! $menuItem->is_active;
         $menuItem->save();
         $this->loadMenuItems();
     }

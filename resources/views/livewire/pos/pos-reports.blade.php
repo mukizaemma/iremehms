@@ -99,6 +99,28 @@
                     </div>
                 </div>
 
+                <div class="card mb-4 border-success">
+                    <div class="card-header fw-semibold">Food &amp; beverage sales <span class="text-muted fw-normal small">(from menu item sales category)</span></div>
+                    <div class="card-body">
+                        @if(count($salesByCategory ?? []) > 0)
+                            <div class="row g-3">
+                                @foreach($salesByCategory as $row)
+                                    @php $lbl = ($row['sales_category'] ?? 'food') === 'beverage' ? 'Beverage' : 'Food'; @endphp
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-3 h-100 bg-light">
+                                            <div class="text-muted small">{{ $lbl }}</div>
+                                            <div class="fs-5 fw-bold">{{ \App\Helpers\CurrencyHelper::format((float) ($row['total'] ?? 0)) }}</div>
+                                        </div>
+                                    </div>
+                                @endforeach
+                            </div>
+                            <p class="text-muted small mb-0 mt-2">Assign each menu item to Food or Beverage under <strong>Menu items</strong> (Restaurant).</p>
+                        @else
+                            <p class="text-muted small mb-0">No paid order lines in this period.</p>
+                        @endif
+                    </div>
+                </div>
+
                 {{-- Print header (visible when printing) --}}
                 <div class="mb-3 d-none d-print-block">
                     @if($hotel)

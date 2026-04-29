@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Models\Stock;
 use App\Models\StockLocation;
 use App\Traits\ChecksModuleStatus;
 use Illuminate\Support\Facades\Auth;
@@ -12,42 +13,68 @@ class StockLocationManagement extends Component
     use ChecksModuleStatus;
 
     public $locations = [];
+
+    /** @var array<int, array{items: int, low: int, value: float}> */
+    public array $locationStats = [];
+
     public $showLocationForm = false;
+
     public $editingLocationId = null;
-    
+
     // Form fields
     public $name = '';
+
     public $code = '';
+
     public $description = '';
+
     public $parent_location_id = null;
+
     public $is_main_location = true;
 
     public function mount()
     {
         // Check if store module is enabled
         $this->ensureModuleEnabled('store');
-        
+
         $user = Auth::user();
         if (! $user || ! $user->canManageStockLocations()) {
             abort(403, 'You do not have permission to manage stock locations.');
         }
-        
+
         $this->loadLocations();
     }
 
     public function loadLocations()
     {
-        $this->locations = StockLocation::with(['parentLocation', 'subLocations'])
+        $locations = StockLocation::with(['parentLocation', 'subLocations'])
             ->orderBy('is_main_location', 'desc')
             ->orderBy('name')
+            ->get();
+
+        $ids = $locations->pluck('id');
+        $byLocation = Stock::query()
+            ->whereIn('stock_location_id', $ids)
             ->get()
-            ->toArray();
+            ->groupBy('stock_location_id');
+
+        $this->locationStats = [];
+        foreach ($locations as $loc) {
+            $stocks = $byLocation->get($loc->id, collect());
+            $this->locationStats[$loc->id] = [
+                'items' => $stocks->count(),
+                'low' => $stocks->filter(fn (Stock $s) => $s->isLowStock())->count(),
+                'value' => round($stocks->sum(fn (Stock $s) => $s->purchaseLineValue()), 2),
+            ];
+        }
+
+        $this->locations = $locations->toArray();
     }
 
     public function openLocationForm($locationId = null)
     {
         $this->editingLocationId = $locationId;
-        
+
         if ($locationId) {
             $location = StockLocation::find($locationId);
             $this->name = $location->name;
@@ -58,7 +85,7 @@ class StockLocationManagement extends Component
         } else {
             $this->resetLocationForm();
         }
-        
+
         $this->showLocationForm = true;
     }
 
@@ -93,7 +120,7 @@ class StockLocationManagement extends Component
     {
         $this->validate([
             'name' => 'required|string|max:255',
-            'code' => 'nullable|string|max:255|unique:stock_locations,code,' . ($this->editingLocationId ?? ''),
+            'code' => 'nullable|string|max:255|unique:stock_locations,code,'.($this->editingLocationId ?? ''),
             'description' => 'nullable|string',
             'parent_location_id' => 'nullable|exists:stock_locations,id',
             'is_main_location' => 'boolean',
@@ -132,19 +159,21 @@ class StockLocationManagement extends Component
     public function deleteLocation($locationId)
     {
         $location = StockLocation::find($locationId);
-        
+
         // Check if location has stocks
         if ($location->stocks()->count() > 0) {
             session()->flash('error', 'Cannot delete location: It has stock items assigned.');
+
             return;
         }
-        
+
         // Check if location has sub-locations
         if ($location->subLocations()->count() > 0) {
             session()->flash('error', 'Cannot delete location: It has sub-locations. Delete sub-locations first.');
+
             return;
         }
-        
+
         $location->delete();
         session()->flash('message', 'Stock location deleted successfully!');
         $this->loadLocations();
@@ -153,7 +182,7 @@ class StockLocationManagement extends Component
     public function toggleActive($locationId)
     {
         $location = StockLocation::find($locationId);
-        $location->is_active = !$location->is_active;
+        $location->is_active = ! $location->is_active;
         $location->save();
         $this->loadLocations();
     }
@@ -161,6 +190,7 @@ class StockLocationManagement extends Component
     public function render()
     {
         $mainLocations = StockLocation::mainLocations()->get();
+
         return view('livewire.stock-location-management', [
             'mainLocations' => $mainLocations,
         ])->layout('livewire.layouts.app-layout');

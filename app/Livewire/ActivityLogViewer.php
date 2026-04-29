@@ -69,7 +69,8 @@ class ActivityLogViewer extends Component
         return $u->isSuperAdmin()
             || $u->canNavigateModules()
             || $u->hasPermission('hotel_manage_users')
-            || $u->hasPermission('reports_view_all');
+            || $u->hasPermission('reports_view_all')
+            || $u->hasPermission('stock_audit');
     }
 
     public function setToday(): void

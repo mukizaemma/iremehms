@@ -10,7 +10,6 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
-use App\Models\SystemConfiguration;
 
 class User extends Authenticatable
 {
@@ -192,6 +191,7 @@ class User extends Authenticatable
     public function isEffectiveDirector(): bool
     {
         $effective = $this->getEffectiveRole();
+
         return $effective && $effective->slug === 'director';
     }
 
@@ -201,6 +201,7 @@ class User extends Authenticatable
     public function isEffectiveGeneralManager(): bool
     {
         $effective = $this->getEffectiveRole();
+
         return $effective && $effective->slug === 'general-manager';
     }
 
@@ -226,9 +227,10 @@ class User extends Authenticatable
     public function canNavigateModules(): bool
     {
         $effective = $this->getEffectiveRole();
-        if (!$effective) {
+        if (! $effective) {
             return false;
         }
+
         return in_array($effective->slug, ['manager', 'director', 'general-manager', 'hotel-admin', 'accountant'], true);
     }
 
@@ -286,6 +288,7 @@ class User extends Authenticatable
     public function isEffectiveWaiter(): bool
     {
         $effective = $this->getEffectiveRole();
+
         return $effective && $effective->slug === 'waiter';
     }
 
@@ -295,6 +298,7 @@ class User extends Authenticatable
     public function isEffectiveReceptionist(): bool
     {
         $effective = $this->getEffectiveRole();
+
         return $effective && $effective->slug === 'receptionist';
     }
 
@@ -304,7 +308,29 @@ class User extends Authenticatable
     public function isEffectiveStoreKeeper(): bool
     {
         $effective = $this->getEffectiveRole();
+
         return $effective && $effective->slug === 'store-keeper';
+    }
+
+    /**
+     * Stock analytics reports (summary, movements, opening/closing, by location).
+     * Includes users with {@see self::isEffectiveStoreKeeper()} or {@see self::hasPermission()} {@code back_office_stock_items}
+     * so store staff seeded with only stock-item permission still see reports in the sidebar.
+     */
+    public function canViewStockReports(): bool
+    {
+        $module = Module::where('slug', 'store')->first();
+        if (! $module || ! $this->hasModuleAccess($module->id)) {
+            return false;
+        }
+
+        return $this->isSuperAdmin()
+            || $this->canNavigateModules()
+            || $this->hasPermission('stock_audit')
+            || $this->hasPermission('stock_logistics')
+            || $this->hasPermission('reports_view_all')
+            || $this->isEffectiveStoreKeeper()
+            || $this->hasPermission('back_office_stock_items');
     }
 
     /**
@@ -377,6 +403,7 @@ class User extends Authenticatable
             if (empty($enabledModuleIds)) {
                 return collect();
             }
+
             return Module::whereIn('id', $enabledModuleIds)
                 ->where('is_active', true)
                 ->orderBy('order')
@@ -412,6 +439,7 @@ class User extends Authenticatable
         if ($effectiveRole && $effectiveRole->hasPermission($permissionSlug)) {
             return true;
         }
+
         return $this->permissions()->where('slug', $permissionSlug)->where('is_active', true)->exists();
     }
 
@@ -453,6 +481,7 @@ class User extends Authenticatable
             if (! empty($enabledModuleIds)) {
                 return in_array($moduleId, $enabledModuleIds);
             }
+
             return true;
         }
 

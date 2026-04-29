@@ -31,7 +31,13 @@
                             → {{ $request->toDepartment->name }}
                         @endif
                     </span>
-                    <button class="btn btn-sm btn-success" wire:click="issueAllForRequest({{ $request->id }})" wire:loading.attr="disabled">Issue all (where available)</button>
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-success"
+                        wire:click="issueAllForRequest({{ $request->id }})"
+                        wire:loading.attr="disabled"
+                        wire:confirm="Issue all remaining lines for request #{{ $request->id }} where stock is available? This updates inventory."
+                    >Issue all (where available)</button>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
@@ -39,14 +45,13 @@
                             <thead>
                                 <tr>
                                     <th>Item</th>
+                                    <th>Category</th>
                                     <th>Requested</th>
                                     <th>Issued</th>
                                     <th>Remaining</th>
                                     <th>Unit</th>
                                     <th>To Department</th>
                                     <th>To Location</th>
-                                    <th>Expiry</th>
-                                    <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -62,6 +67,12 @@
                                     @endphp
                                     <tr>
                                         <td>{{ $item->stock->name ?? 'N/A' }}</td>
+                                        <td>
+                                            @php
+                                                $inv = \App\Enums\InventoryCategory::tryFrom((string) ($item->stock->inventory_category ?? ''));
+                                            @endphp
+                                            <span class="badge bg-secondary">{{ $inv?->label() ?? '—' }}</span>
+                                        </td>
                                         <td>{{ number_format($item->quantity, 2) }}</td>
                                         <td>{{ number_format($item->quantity_issued ?? 0, 2) }}</td>
                                         <td>{{ number_format($remaining, 2) }}</td>
@@ -69,16 +80,14 @@
                                         <td>{{ $request->toDepartment->name ?? '—' }}</td>
                                         <td>{{ $request->toStockLocation->name ?? '—' }}</td>
                                         <td>
-                                            @php
-                                                $expiry = ($item->stock && ($item->stock->use_expiration ?? false)) ? $item->stock->expiration_date : null;
-                                                $expiryFormatted = $expiry ? \Carbon\Carbon::parse($expiry)->format('Y-m-d') : '—';
-                                            @endphp
-                                            <span class="text-muted">{{ $expiryFormatted }}</span>
-                                        </td>
-                                        <td><span class="badge bg-{{ $item->issue_status === 'partial' ? 'info' : 'secondary' }}">{{ $item->issue_status }}</span></td>
-                                        <td>
                                             @if($canIssue)
-                                                <button class="btn btn-sm btn-primary" wire:click="issueItem({{ $item->id }})" wire:loading.attr="disabled">Issue</button>
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-sm btn-primary"
+                                                    wire:click="issueItem({{ $item->id }})"
+                                                    wire:loading.attr="disabled"
+                                                    wire:confirm="Issue {{ number_format(min($remaining, $available), 2) }} {{ $item->stock->qty_unit ?? $item->stock->unit ?? '' }} of {{ $item->stock->name ?? 'item' }} from main stock? Inventory will be updated."
+                                                >Issue</button>
                                             @endif
                                             @if($remaining > 0 && $available < $remaining)
                                                 <button class="btn btn-sm btn-outline-warning" wire:click="openAddToRequisitionModal([{{ $item->id }}])">Add to requisition</button>

@@ -4,14 +4,25 @@ namespace App\Livewire;
 
 use App\Models\Hotel;
 use App\Models\SupportRequest;
+use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
 class HotelSubscription extends Component
 {
     public $showSupportModal = false;
+
     public $support_subject = '';
+
     public $support_message = '';
+
     public $expandedRequestId = null;
+
+    public function mount(): void
+    {
+        if (! Auth::user()?->isEffectiveSuperAdmin()) {
+            abort(403, 'Subscription and billing are only available when using the Super Admin role.');
+        }
+    }
 
     public function expandRequest(int $id): void
     {
@@ -42,8 +53,9 @@ class HotelSubscription extends Component
         ]);
 
         $hotel = Hotel::getHotel();
-        if (!$hotel) {
+        if (! $hotel) {
             session()->flash('error', 'Hotel not found.');
+
             return;
         }
 

@@ -66,6 +66,9 @@ class PosReports extends Component
      */
     public array $reportByDate = [];
 
+    /** @var list<array{sales_category:string,total:float}> */
+    public array $salesByCategory = [];
+
     /**
      * Every non-voided order line in range (waiter-focused detail list).
      *
@@ -248,6 +251,7 @@ class PosReports extends Component
             $this->executiveSummary = $this->emptyExecutiveSummary();
             $this->reportByDate = [];
             $this->soldLineItems = [];
+            $this->salesByCategory = [];
 
             return;
         }
@@ -328,6 +332,24 @@ class PosReports extends Component
                 ->orderBy('orders.updated_at')
                 ->orderBy('orders.id')
                 ->orderBy('order_items.id')
+                ->get()
+                ->all()
+        ));
+
+        $salesCatExpr = "COALESCE(NULLIF(TRIM(menu_items.sales_category), ''), 'food')";
+        $this->salesByCategory = array_values(array_map(
+            static fn ($r) => (array) $r,
+            DB::table('order_items')
+                ->join('orders', 'order_items.order_id', '=', 'orders.id')
+                ->join('menu_items', 'order_items.menu_item_id', '=', 'menu_items.menu_item_id')
+                ->whereIn('orders.id', $orderIds)
+                ->whereNull('order_items.voided_at')
+                ->select(
+                    DB::raw("{$salesCatExpr} as sales_category"),
+                    DB::raw('SUM(order_items.line_total) as total')
+                )
+                ->groupBy(DB::raw($salesCatExpr))
+                ->orderBy(DB::raw($salesCatExpr))
                 ->get()
                 ->all()
         ));
@@ -636,6 +658,7 @@ class PosReports extends Component
                     fputcsv($out, ['TOTAL', '', '', (string) $menuTotal]);
                 }
                 fclose($out);
+
                 return;
             }
 

@@ -1,15 +1,30 @@
 <div class="bg-light rounded p-4">
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <h5 class="mb-0">Stock Reports & Analytics</h5>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <span class="btn btn-primary btn-sm" style="pointer-events: none; cursor: default;" title="You are on the main stock reports screen" aria-current="page">
+                        <i class="fa fa-chart-bar me-2"></i>Stock reports
+                    </span>
+                    <a href="{{ route('stock.daily-by-category') }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fa fa-layer-group me-2"></i>Daily stock by category
+                    </a>
                     <a href="{{ route('stock.opening-closing-report') }}" class="btn btn-outline-primary btn-sm">
                         <i class="fa fa-balance-scale me-2"></i>Opening & Closing Report
+                    </a>
+                    <a href="{{ route('stock.location-activity-report') }}" class="btn btn-outline-primary btn-sm">
+                        <i class="fa fa-warehouse me-2"></i>Activity by location
                     </a>
                     <a href="{{ route('stock.dashboard') }}" class="btn btn-secondary btn-sm">
                         <i class="fa fa-arrow-left me-2"></i>Back to Dashboard
                     </a>
                 </div>
             </div>
+
+    <div class="d-flex justify-content-end mb-2 print-hide">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="window.print()">
+            <i class="fa fa-print me-1"></i>Print
+        </button>
+    </div>
 
     <!-- Report Type Selector -->
     <div class="card mb-4">
@@ -103,7 +118,40 @@
             </div>
         </div>
 
-        <div class="card">
+        <div id="stock-summary-inventory-category" class="card border-primary">
+            <div class="card-header bg-white border-primary py-3">
+                <h6 class="mb-0 text-primary fw-semibold">Summary by inventory category</h6>
+                <small class="text-muted">Primary stock overview — categories match daily stock sheets (Dry Goods, Beverage, etc.). Edit each stock item to change category.</small>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Category</th>
+                                <th>Count</th>
+                                <th>Total value (at cost)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @forelse($summaryData['by_inventory_category'] ?? [] as $row)
+                                <tr>
+                                    <td><strong>{{ $row['name'] }}</strong></td>
+                                    <td>{{ $row['count'] }}</td>
+                                    <td>{{ \App\Helpers\CurrencyHelper::format($row['total_value']) }}</td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="3" class="text-muted text-center py-4">No stock rows match the current filters.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-4">
             <div class="card-header">
                 <h6 class="mb-0">Summary by Item Type</h6>
             </div>
@@ -253,3 +301,12 @@
         </div>
     @endif
 </div>
+
+@push('styles')
+<style>
+    @media print {
+        .print-hide { display: none !important; }
+        .table { font-size: 10px; }
+    }
+</style>
+@endpush

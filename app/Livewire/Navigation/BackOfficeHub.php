@@ -2,8 +2,8 @@
 
 namespace App\Livewire\Navigation;
 
-use App\Models\Hotel;
 use App\Livewire\Navigation\Concerns\EnsuresManagerHubAccess;
+use App\Models\Hotel;
 use App\Services\OperationalShiftService;
 use Livewire\Component;
 
@@ -25,7 +25,7 @@ class BackOfficeHub extends Component
             'canConfigureHotel' => $user->hasPermission('hotel_configure_details'),
             'canManageHotelUsers' => $user->hasPermission('hotel_manage_users'),
             'canAccessShiftManagement' => OperationalShiftService::userCanAccessShiftManagementPage($user),
-            'showSubscriptionTile' => $hotel ? $hotel->shouldShowSubscriptionHubTile() : false,
+            'showSubscriptionTile' => $user->isEffectiveSuperAdmin() && $hotel && $hotel->shouldShowSubscriptionHubTile(),
         ])->layout('livewire.layouts.app-layout');
     }
 }
