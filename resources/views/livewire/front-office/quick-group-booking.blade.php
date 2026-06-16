@@ -5,7 +5,6 @@
                 <div class="mb-4">
                     <a href="{{ route('front-office.dashboard') }}" class="btn btn-outline-secondary btn-sm mb-2"><i class="fa fa-arrow-left me-1"></i>Back</a>
                     <h5 class="mb-2">Quick group booking</h5>
-                    @include('livewire.front-office.partials.front-office-quick-nav')
                 </div>
 
                 @if($success && $reservation_number)

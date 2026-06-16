@@ -4,9 +4,6 @@
             <div class="bg-light rounded p-3">
                 <h5 class="mb-1">Rooms</h5>
                 <p class="text-muted small mb-0">View rooms and bookable units. Nightly rates are set per room type in the <strong>Categories</strong> tab.</p>
-                <div class="mt-3 mb-2">
-                    @include('livewire.front-office.partials.front-office-quick-nav', ['hideRoomsLink' => true])
-                </div>
                 {{-- Rates: set in Categories (room types) or Hotel settings → Pricing --}}
                 <div class="d-none alert alert-info py-2 px-3 mb-4 small">
                     <strong>Where to set prices &amp; rates:</strong>

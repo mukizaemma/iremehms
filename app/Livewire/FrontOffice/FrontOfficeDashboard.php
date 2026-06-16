@@ -3,19 +3,17 @@
 namespace App\Livewire\FrontOffice;
 
 use App\Models\Hotel;
-use App\Models\PreRegistration;
 use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\RoomUnit;
 use App\Traits\ChecksModuleStatus;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
 /**
  * Front Office Dashboard – module summary for receptionist.
- * Shows rooms, vacant, occupied, reserved, due in, due out, dirty, open; click a box to see details.
+ * Shows rooms, vacant, occupied, due in, due out, dirty; click a box to see details.
  */
 class FrontOfficeDashboard extends Component
 {
@@ -25,24 +23,17 @@ class FrontOfficeDashboard extends Component
     public $totalUnits = 0;
     public $vacant = 0;
     public $occupied = 0;
-    public $reserved = 0;
     public $dueOut = 0;
     public $dueIn = 0;
     public $dirty = 0;
-    /** Same as vacant – rooms available to sell */
-    public $open = 0;
     /** No-show reservations (guest did not arrive) for follow-up */
     public $noShow = 0;
 
-    /** Which summary box is expanded: null | vacant | occupied | reserved | due_out | due_in | dirty | open | no_show */
-    public ?string $detailFilter = null;
-    /** List of items for the detail panel: [ ['room_label' => ..., 'guest_name' => ..., 'check_in' => ..., 'check_out' => ...], ... ] */
-    public array $detailItems = [];
+    /** Filter the rooms table: null | all | vacant | occupied | due_out | due_in | dirty | no_show */
+    public ?string $tableFilter = null;
 
-    // Clients table (reservations + pre-arrivals)
-    public string $clientSearch = '';
     /** @var array<int, array<string, mixed>> */
-    public array $clients = [];
+    public array $roomRows = [];
 
     public function mount()
     {
@@ -53,7 +44,23 @@ class FrontOfficeDashboard extends Component
             abort(403, 'You do not have access to Front Office.');
         }
         $this->loadSummary();
-        $this->loadClients();
+        $this->loadRoomRows();
+    }
+
+    public function refreshDashboard(): void
+    {
+        $this->loadSummary();
+        $this->loadRoomRows();
+    }
+
+    public function toggleTableFilter(string $filter): void
+    {
+        $this->tableFilter = $this->tableFilter === $filter ? null : $filter;
+    }
+
+    public function clearTableFilter(): void
+    {
+        $this->tableFilter = null;
     }
 
     protected function loadSummary(): void
@@ -77,22 +84,24 @@ class FrontOfficeDashboard extends Component
         $unitIdsOccupied = [];
         $unitIdsDueOut = [];
         $unitIdsDueIn = [];
-        $unitIdsInRange = [];
+        $unitIdsBookedInRange = [];
         $unitIdsNoShow = [];
 
         foreach ($reservations as $r) {
             $from = $r->check_in_date->format('Y-m-d');
             $to = $r->check_out_date->format('Y-m-d');
             $inRange = $from <= $endRange && $to >= $today;
-            $occupiesToday = $from <= $today && $to >= $today && $r->status !== Reservation::STATUS_NO_SHOW;
-            $departsToday = $to === $today && $r->status !== Reservation::STATUS_NO_SHOW;
-            $arrivesToday = $from === $today;
             $isNoShow = $r->status === Reservation::STATUS_NO_SHOW;
+            $isCheckedIn = $r->status === Reservation::STATUS_CHECKED_IN;
+            $isConfirmed = $r->status === Reservation::STATUS_CONFIRMED;
+            $occupiesToday = $isCheckedIn && $from <= $today && $today < $to;
+            $departsToday = $isCheckedIn && $to === $today;
+            $arrivesTodayDueIn = $isConfirmed && $from === $today;
 
             foreach ($r->roomUnits as $unit) {
                 $uid = (string) $unit->id;
                 if ($inRange) {
-                    $unitIdsInRange[$uid] = true;
+                    $unitIdsBookedInRange[$uid] = true;
                 }
                 if ($isNoShow && $inRange) {
                     $unitIdsNoShow[$uid] = true;
@@ -103,7 +112,7 @@ class FrontOfficeDashboard extends Component
                 if ($departsToday) {
                     $unitIdsDueOut[$uid] = true;
                 }
-                if ($arrivesToday) {
+                if ($arrivesTodayDueIn) {
                     $unitIdsDueIn[$uid] = true;
                 }
             }
@@ -112,313 +121,180 @@ class FrontOfficeDashboard extends Component
         $occupiedCount = count($unitIdsOccupied);
         $dueOutCount = count($unitIdsDueOut);
         $dueInCount = count($unitIdsDueIn);
-        $reservedCount = count($unitIdsInRange);
         $noShowCount = count($unitIdsNoShow);
-        $vacantCount = max(0, $this->totalUnits - $reservedCount);
+        $vacantCount = max(0, $this->totalUnits - count($unitIdsBookedInRange));
 
         $this->occupied = $occupiedCount;
         $this->dueOut = $dueOutCount;
         $this->dueIn = $dueInCount;
-        $this->reserved = $reservedCount;
         $this->noShow = $noShowCount;
         $this->vacant = $vacantCount;
-        $this->open = $vacantCount;
         $this->dirty = 0; // No housekeeping status in DB yet
     }
 
-    public function updatedClientSearch(): void
-    {
-        $this->loadClients();
-    }
-
-    protected function loadClients(): void
+    protected function loadRoomRows(): void
     {
         $hotel = Hotel::getHotel();
-
         if (! $hotel) {
-            $this->clients = [];
+            $this->roomRows = [];
+
             return;
         }
 
-        $q = trim($this->clientSearch);
-        $qLower = strtolower($q);
+        $today = Hotel::getTodayForHotel();
+        $endRange = Carbon::now($hotel->getTimezone())->addDays(30)->format('Y-m-d');
 
-        // Reservations-based clients
-        $reservationQuery = Reservation::where('hotel_id', $hotel->id)
-            ->whereNotIn('status', [Reservation::STATUS_CANCELLED])
-            ->select([
-                'guest_name',
-                'guest_phone',
-                'guest_email',
-                'guest_country',
-                'guest_address',
-                DB::raw('COUNT(*) as stay_count'),
-                DB::raw('MAX(check_in_date) as last_check_in'),
-            ])
-            ->groupBy('guest_name', 'guest_phone', 'guest_email', 'guest_country', 'guest_address');
-
-        if ($q !== '') {
-            $reservationQuery->where(function ($w) use ($qLower, $q) {
-                $w->whereRaw('LOWER(guest_name) LIKE ?', ['%' . $qLower . '%'])
-                    ->orWhereRaw('LOWER(guest_phone) LIKE ?', ['%' . $qLower . '%'])
-                    ->orWhereRaw('LOWER(guest_email) LIKE ?', ['%' . $qLower . '%']);
-            });
-        }
-
-        $reservationGroups = $reservationQuery
-            ->orderByDesc('last_check_in')
-            ->limit(100)
+        $roomIds = Room::where('hotel_id', $hotel->id)->where('is_active', true)->pluck('id');
+        $units = RoomUnit::whereIn('room_id', $roomIds)
+            ->where('is_active', true)
+            ->with(['room.roomType'])
+            ->orderBy('sort_order')
             ->get();
 
-        // Pre-arrival clients (not yet confirmed in reservations)
-        $preQuery = PreRegistration::where('hotel_id', $hotel->id)
-            ->select([
-                'guest_name',
-                'guest_phone',
-                'guest_email',
-                'organization',
-                DB::raw('COUNT(*) as pre_count'),
-                DB::raw('MAX(submitted_at) as last_pre'),
-            ])
-            ->groupBy('guest_name', 'guest_phone', 'guest_email', 'organization');
-
-        if ($q !== '') {
-            $preQuery->where(function ($w) use ($qLower, $q) {
-                $w->whereRaw('LOWER(guest_name) LIKE ?', ['%' . $qLower . '%'])
-                    ->orWhereRaw('LOWER(guest_phone) LIKE ?', ['%' . $qLower . '%'])
-                    ->orWhereRaw('LOWER(guest_email) LIKE ?', ['%' . $qLower . '%'])
-                    ->orWhereRaw('LOWER(organization) LIKE ?', ['%' . $qLower . '%']);
-            });
-        }
-
-        $preGroups = $preQuery
-            ->orderByDesc('last_pre')
-            ->limit(100)
+        $reservations = Reservation::where('hotel_id', $hotel->id)
+            ->whereNotIn('status', [Reservation::STATUS_CANCELLED, Reservation::STATUS_CHECKED_OUT])
+            ->where('check_out_date', '>=', $today)
+            ->where('check_in_date', '<=', $endRange)
+            ->with(['roomUnits'])
+            ->orderBy('check_in_date')
             ->get();
 
-        $makeKey = function (?string $name, ?string $phone, ?string $email): string {
-            $phone = $phone ? preg_replace('/\\s+/', '', strtolower($phone)) : null;
-            $email = $email ? strtolower(trim($email)) : null;
-            $name = $name ? strtolower(trim($name)) : '';
-
-            if ($phone) {
-                return 'p:' . $phone;
+        $reservationsByUnit = [];
+        foreach ($reservations as $reservation) {
+            foreach ($reservation->roomUnits as $unit) {
+                $uid = (int) $unit->id;
+                if (! isset($reservationsByUnit[$uid])) {
+                    $reservationsByUnit[$uid] = [];
+                }
+                $reservationsByUnit[$uid][] = $reservation;
             }
-            if ($email) {
-                return 'e:' . $email;
-            }
+        }
 
-            return 'n:' . $name;
-        };
+        $rows = [];
+        foreach ($units as $unit) {
+            $reservation = $this->pickReservationForUnit($reservationsByUnit[(int) $unit->id] ?? [], $today);
+            $status = $this->resolveUnitStatus($reservation, $today);
+            $room = $unit->room;
 
-        $byKey = [];
-
-        foreach ($reservationGroups as $g) {
-            $key = $makeKey($g->guest_name, $g->guest_phone, $g->guest_email);
-            $byKey[$key] = [
-                'name' => $g->guest_name,
-                'phone' => $g->guest_phone,
-                'email' => $g->guest_email,
-                'country' => $g->guest_country,
-                'address' => $g->guest_address,
-                'stay_count' => (int) $g->stay_count,
-                'pre_count' => 0,
-                'last_activity' => $g->last_check_in ? Carbon::parse($g->last_check_in)->format('Y-m-d') : null,
+            $rows[] = [
+                'unit_id' => $unit->id,
+                'room_number' => $unit->label ?: ($room->room_number ?? (string) $unit->id),
+                'room_id' => $room->id ?? null,
+                'room_type' => strtoupper($room->roomType->name ?? $room->name ?? '—'),
+                'status' => $status['label'],
+                'status_key' => $status['key'],
+                'sort_rank' => $status['sort_rank'],
+                'guest_name' => $reservation?->guest_name,
+                'company' => $reservation
+                    ? ($reservation->group_name ?: $reservation->business_source_detail ?: $reservation->business_source)
+                    : null,
+                'booking_source' => $reservation?->booking_source,
+                'check_in' => $reservation?->check_in_date?->format('d/m/Y'),
+                'check_out' => $reservation?->check_out_date?->format('d/m/Y'),
+                'reservation_id' => $reservation?->id,
+                'reservation_number' => $reservation?->reservation_number,
             ];
         }
 
-        foreach ($preGroups as $g) {
-            $key = $makeKey($g->guest_name, $g->guest_phone, $g->guest_email);
-            if (! isset($byKey[$key])) {
-                $byKey[$key] = [
-                    'name' => $g->guest_name,
-                    'phone' => $g->guest_phone,
-                    'email' => $g->guest_email,
-                    'country' => null,
-                    'address' => null,
-                    'stay_count' => 0,
-                    'pre_count' => (int) $g->pre_count,
-                    'last_activity' => $g->last_pre ? Carbon::parse($g->last_pre)->format('Y-m-d') : null,
-                ];
-            } else {
-                $byKey[$key]['pre_count'] = (int) $g->pre_count;
-                if ($g->last_pre) {
-                    $preDate = Carbon::parse($g->last_pre);
-                    $currentLast = $byKey[$key]['last_activity'] ? Carbon::parse($byKey[$key]['last_activity']) : null;
-                    if (! $currentLast || $preDate->gt($currentLast)) {
-                        $byKey[$key]['last_activity'] = $preDate->format('Y-m-d');
-                    }
-                }
+        usort($rows, function (array $a, array $b): int {
+            if ($a['sort_rank'] !== $b['sort_rank']) {
+                return $a['sort_rank'] <=> $b['sort_rank'];
+            }
+
+            return strnatcasecmp((string) $a['room_number'], (string) $b['room_number']);
+        });
+
+        $this->roomRows = $rows;
+    }
+
+    /**
+     * @param  array<int, Reservation>  $candidates
+     */
+    protected function pickReservationForUnit(array $candidates, string $today): ?Reservation
+    {
+        if ($candidates === []) {
+            return null;
+        }
+
+        $todayCarbon = Carbon::parse($today);
+
+        foreach ($candidates as $reservation) {
+            if ($reservation->status === Reservation::STATUS_CHECKED_IN
+                && $reservation->check_in_date->lte($todayCarbon)
+                && $reservation->check_out_date->gt($todayCarbon)) {
+                return $reservation;
             }
         }
 
-        $this->clients = collect($byKey)
-            ->sortByDesc(function ($c) {
-                return $c['last_activity'] ?? '0000-00-00';
-            })
-            ->values()
-            ->take(200)
-            ->toArray();
-    }
-
-    /** Show detail panel for the given filter. */
-    public function showDetail(string $filter): void
-    {
-        $this->detailFilter = $filter;
-        $this->loadDetailItems();
-    }
-
-    public function clearDetail(): void
-    {
-        $this->detailFilter = null;
-        $this->detailItems = [];
-    }
-
-    protected function loadDetailItems(): void
-    {
-        $hotel = Hotel::getHotel();
-        $today = Hotel::getTodayForHotel();
-        $items = [];
-        $roomIds = Room::where('hotel_id', $hotel->id)->where('is_active', true)->pluck('id');
-
-        switch ($this->detailFilter) {
-            case 'vacant':
-            case 'open':
-                $occupiedUnitIds = Reservation::where('hotel_id', $hotel->id)
-                    ->whereNotIn('status', [Reservation::STATUS_CANCELLED, Reservation::STATUS_NO_SHOW, Reservation::STATUS_CHECKED_OUT])
-                    ->where('check_in_date', '<=', $today)
-                    ->where('check_out_date', '>=', $today)
-                    ->with('roomUnits')
-                    ->get()
-                    ->pluck('roomUnits')
-                    ->flatten()
-                    ->pluck('id')
-                    ->flip()
-                    ->all();
-                $units = RoomUnit::whereIn('room_id', $roomIds)->where('is_active', true)->with('room')->get();
-                foreach ($units as $unit) {
-                    if (! isset($occupiedUnitIds[$unit->id])) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => null,
-                            'check_in' => null,
-                            'check_out' => null,
-                            'reservation_number' => null,
-                        ];
-                    }
-                }
-                break;
-            case 'occupied':
-                $reservations = Reservation::where('hotel_id', $hotel->id)
-                    ->whereNotIn('status', [Reservation::STATUS_CANCELLED, Reservation::STATUS_NO_SHOW, Reservation::STATUS_CHECKED_OUT])
-                    ->where('check_in_date', '<=', $today)
-                    ->where('check_out_date', '>=', $today)
-                    ->with(['roomUnits.room'])
-                    ->orderBy('check_in_date')
-                    ->get();
-                foreach ($reservations as $r) {
-                    foreach ($r->roomUnits as $unit) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => $r->guest_name,
-                            'check_in' => $r->check_in_date->format('Y-m-d'),
-                            'check_out' => $r->check_out_date->format('Y-m-d'),
-                            'reservation_number' => $r->reservation_number,
-                        ];
-                    }
-                }
-                break;
-            case 'due_out':
-                $reservations = Reservation::where('hotel_id', Hotel::getHotel()->id)
-                    ->where('status', '!=', Reservation::STATUS_CANCELLED)
-                    ->where('check_out_date', $today)
-                    ->with(['roomUnits.room'])
-                    ->get();
-                foreach ($reservations as $r) {
-                    foreach ($r->roomUnits as $unit) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => $r->guest_name,
-                            'check_in' => $r->check_in_date->format('Y-m-d'),
-                            'check_out' => $r->check_out_date->format('Y-m-d'),
-                            'reservation_number' => $r->reservation_number,
-                        ];
-                    }
-                }
-                break;
-            case 'due_in':
-                $reservations = Reservation::where('hotel_id', Hotel::getHotel()->id)
-                    ->where('status', '!=', Reservation::STATUS_CANCELLED)
-                    ->where('check_in_date', $today)
-                    ->with(['roomUnits.room'])
-                    ->get();
-                foreach ($reservations as $r) {
-                    foreach ($r->roomUnits as $unit) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => $r->guest_name,
-                            'check_in' => $r->check_in_date->format('Y-m-d'),
-                            'check_out' => $r->check_out_date->format('Y-m-d'),
-                            'reservation_number' => $r->reservation_number,
-                        ];
-                    }
-                }
-                break;
-            case 'reserved':
-                $reservations = Reservation::where('hotel_id', Hotel::getHotel()->id)
-                    ->where('status', '!=', Reservation::STATUS_CANCELLED)
-                    ->where('check_out_date', '>=', $today)
-                    ->where('check_in_date', '<=', Carbon::now($hotel->getTimezone())->addDays(30)->format('Y-m-d'))
-                    ->with(['roomUnits.room'])
-                    ->orderBy('check_in_date')
-                    ->get();
-                foreach ($reservations as $r) {
-                    foreach ($r->roomUnits as $unit) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => $r->guest_name,
-                            'check_in' => $r->check_in_date->format('Y-m-d'),
-                            'check_out' => $r->check_out_date->format('Y-m-d'),
-                            'reservation_number' => $r->reservation_number,
-                        ];
-                    }
-                }
-                break;
-            case 'no_show':
-                $endRange = Carbon::now($hotel->getTimezone())->addDays(30)->format('Y-m-d');
-                $reservations = Reservation::where('hotel_id', $hotel->id)
-                    ->where('status', Reservation::STATUS_NO_SHOW)
-                    ->where('check_out_date', '>=', $today)
-                    ->where('check_in_date', '<=', $endRange)
-                    ->with(['roomUnits.room'])
-                    ->orderBy('check_in_date')
-                    ->get();
-                foreach ($reservations as $r) {
-                    foreach ($r->roomUnits as $unit) {
-                        $items[] = [
-                            'room_label' => $unit->label,
-                            'room_name' => $unit->room->name ?? '',
-                            'guest_name' => $r->guest_name,
-                            'check_in' => $r->check_in_date->format('Y-m-d'),
-                            'check_out' => $r->check_out_date->format('Y-m-d'),
-                            'reservation_number' => $r->reservation_number,
-                        ];
-                    }
-                }
-                break;
-            case 'dirty':
-                $items = [];
-                break;
-            default:
-                $items = [];
+        foreach ($candidates as $reservation) {
+            if ($reservation->status === Reservation::STATUS_CONFIRMED
+                && $reservation->check_in_date->format('Y-m-d') === $today) {
+                return $reservation;
+            }
         }
 
-        $this->detailItems = $items;
+        foreach ($candidates as $reservation) {
+            if ($reservation->status === Reservation::STATUS_NO_SHOW) {
+                continue;
+            }
+            if ($reservation->check_out_date->gte($todayCarbon)) {
+                return $reservation;
+            }
+        }
+
+        return $candidates[0];
+    }
+
+    /**
+     * @return array{key: string, label: string, sort_rank: int}
+     */
+    protected function resolveUnitStatus(?Reservation $reservation, string $today): array
+    {
+        if (! $reservation) {
+            return ['key' => 'vacant', 'label' => 'Vacant', 'sort_rank' => 60];
+        }
+
+        $from = $reservation->check_in_date->format('Y-m-d');
+        $to = $reservation->check_out_date->format('Y-m-d');
+
+        if ($reservation->status === Reservation::STATUS_NO_SHOW) {
+            return ['key' => 'no_show', 'label' => 'No show', 'sort_rank' => 50];
+        }
+
+        if ($reservation->status === Reservation::STATUS_CHECKED_IN) {
+            if ($to === $today) {
+                return ['key' => 'due_out', 'label' => 'Due out', 'sort_rank' => 10];
+            }
+            if ($from <= $today && $today < $to) {
+                return ['key' => 'occupied', 'label' => 'Occupied', 'sort_rank' => 0];
+            }
+        }
+
+        if ($reservation->status === Reservation::STATUS_CONFIRMED) {
+            if ($from === $today) {
+                return ['key' => 'due_in', 'label' => 'Due in', 'sort_rank' => 20];
+            }
+            if ($from > $today) {
+                return ['key' => 'reserved', 'label' => 'Reserved', 'sort_rank' => 30];
+            }
+        }
+
+        return ['key' => 'reserved', 'label' => 'Reserved', 'sort_rank' => 30];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function getDisplayedRoomRowsProperty(): array
+    {
+        if (! $this->tableFilter || $this->tableFilter === 'all') {
+            return $this->roomRows;
+        }
+
+        return array_values(array_filter(
+            $this->roomRows,
+            fn (array $row) => $row['status_key'] === $this->tableFilter
+        ));
     }
 
     public function render()

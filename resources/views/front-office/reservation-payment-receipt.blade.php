@@ -234,8 +234,12 @@
             <tr>
                 <td>{{ __('Payment') }} {{ $preview ? '('.__('preview').')' : '' }}</td>
                 <td class="text-end">
-                    {{ $hotel->currency ?? ($payment?->currency ?? 'RWF') }}
-                    {{ number_format((float) ($preview ? ($previewAmount ?? 0) : ($payment->amount ?? 0)), 2, '.', '') }}
+                    @if($preview)
+                        {{ $hotel->currency ?? 'RWF' }}
+                        {{ number_format((float) ($previewAmount ?? 0), 2, '.', '') }}
+                    @else
+                        {{ \App\Support\ForeignCurrencyPaymentSupport::formatDisplay($payment) }}
+                    @endif
                 </td>
             </tr>
             <tr>

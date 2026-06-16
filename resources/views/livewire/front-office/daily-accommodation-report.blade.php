@@ -4,7 +4,6 @@
             <div class="bg-light rounded p-4">
                 <div class="mb-3">
                     <h5 class="mb-2">Rooms daily report</h5>
-                    @include('livewire.front-office.partials.front-office-quick-nav')
                 </div>
 
                 <div class="card mb-3">

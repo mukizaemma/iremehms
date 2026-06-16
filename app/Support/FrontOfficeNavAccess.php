@@ -4,9 +4,10 @@ namespace App\Support;
 
 use App\Models\Module;
 use App\Models\User;
+use App\Services\OperationalShiftService;
 
 /**
- * Permission checks for Front Office hub tiles — mirrors each target page's mount() rules.
+ * Permission checks for Front Office navigation — mirrors each target page's mount() rules.
  */
 final class FrontOfficeNavAccess
 {
@@ -27,7 +28,6 @@ final class FrontOfficeNavAccess
         return $mid !== null && $user->hasModuleAccess($mid);
     }
 
-    /** Rooms, booking calendar, new reservation, all reservations — module access (see FrontOfficeRooms, AddReservation, ReservationsList). */
     public static function canViewRooms(User $user): bool
     {
         return self::hasFrontOfficeModule($user);
@@ -48,25 +48,21 @@ final class FrontOfficeNavAccess
         return self::hasFrontOfficeModule($user);
     }
 
-    /** QuickGroupBooking::mount */
     public static function canViewGroupReservation(User $user): bool
     {
         return self::hasFrontOfficeModule($user);
     }
 
-    /** SelfRegisteredList::mount */
     public static function canViewPreArrival(User $user): bool
     {
         return self::hasFrontOfficeModule($user);
     }
 
-    /** GuestsReport::mount */
     public static function canViewGuestsReport(User $user): bool
     {
         return self::hasFrontOfficeModule($user);
     }
 
-    /** DailyAccommodationReport::mount */
     public static function canViewRoomsDailyReport(User $user): bool
     {
         return $user->isSuperAdmin()
@@ -77,7 +73,6 @@ final class FrontOfficeNavAccess
             || $user->isReceptionist();
     }
 
-    /** FrontOfficeReports::mount */
     public static function canViewOtherSalesReport(User $user): bool
     {
         return $user->isSuperAdmin()
@@ -88,7 +83,15 @@ final class FrontOfficeNavAccess
             || $user->isReceptionist();
     }
 
-    /** GuestCommunications::mount */
+    public static function canViewGuestBills(User $user): bool
+    {
+        return $user->isSuperAdmin()
+            || $user->canNavigateModules()
+            || $user->hasPermission('fo_view_guest_bills')
+            || $user->hasPermission('fo_collect_payment')
+            || $user->hasPermission('reports_view_all');
+    }
+
     public static function canViewCommunication(User $user): bool
     {
         return $user->isSuperAdmin()
@@ -97,5 +100,69 @@ final class FrontOfficeNavAccess
             || $user->isReceptionist()
             || $user->isEffectiveGeneralManager()
             || $user->isManager();
+    }
+
+    public static function canManageProforma(User $user): bool
+    {
+        return self::hasFrontOfficeModule($user) && $user->hasPermission('fo_proforma_manage');
+    }
+
+    public static function canManageWellness(User $user): bool
+    {
+        return self::hasFrontOfficeModule($user) && $user->hasPermission('fo_wellness_manage');
+    }
+
+    public static function canConfigureHotelDetails(User $user): bool
+    {
+        return $user->isSuperAdmin() || $user->hasPermission('hotel_configure_details');
+    }
+
+    public static function canConfigureFoHotelSettings(User $user): bool
+    {
+        return $user->isSuperAdmin() || $user->isManager() || $user->canNavigateModules();
+    }
+
+    public static function canManageRoomTypes(User $user): bool
+    {
+        return $user->isSuperAdmin()
+            || $user->isEffectiveGeneralManager()
+            || $user->canNavigateModules()
+            || $user->hasPermission('back_office_rooms');
+    }
+
+    public static function canViewAdditionalCharges(User $user): bool
+    {
+        return self::hasFrontOfficeModule($user);
+    }
+
+    public static function canManageAdditionalCharges(User $user): bool
+    {
+        return $user->isSuperAdmin() || $user->canNavigateModules();
+    }
+
+    public static function canManageAmenities(User $user): bool
+    {
+        return $user->isSuperAdmin() || $user->isManager();
+    }
+
+    public static function canAccessHotelSettingsHub(User $user): bool
+    {
+        return $user->canNavigateModules() || $user->isSuperAdmin();
+    }
+
+    public static function canAccessBackOfficeHub(User $user): bool
+    {
+        return $user->canNavigateModules() || $user->isSuperAdmin();
+    }
+
+    public static function canViewGeneralSalesReports(User $user): bool
+    {
+        return self::canViewOtherSalesReport($user)
+            || $user->hasPermission('reports_view_all');
+    }
+
+    public static function canViewShiftManagement(User $user): bool
+    {
+        return OperationalShiftService::userCanAccessShiftManagementPage($user);
     }
 }

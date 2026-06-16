@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\MealPlan;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -19,6 +20,7 @@ class Reservation extends Model
         'hotel_id',
         'reservation_number',
         'guest_name',
+        'booker_name',
         'guest_email',
         'guest_phone',
         'guest_country',
@@ -32,6 +34,19 @@ class Reservation extends Model
         'check_out_time',
         'room_type_id',
         'rate_plan',
+        'meal_plan',
+        'room_rate_amount',
+        'meal_plan_supplement',
+        'breakfast_preferred_time',
+        'lunch_preferred_time',
+        'dinner_preferred_time',
+        'breakfast_in_room',
+        'lunch_in_room',
+        'dinner_in_room',
+        'meal_service_notes',
+        'is_room_complimentary',
+        'is_meal_complimentary',
+        'complimentary_reason',
         'adult_count',
         'child_count',
         'total_amount',
@@ -51,7 +66,70 @@ class Reservation extends Model
         'check_out_date' => 'date',
         'total_amount' => 'decimal:2',
         'paid_amount' => 'decimal:2',
+        'room_rate_amount' => 'decimal:2',
+        'meal_plan_supplement' => 'decimal:2',
+        'breakfast_in_room' => 'boolean',
+        'lunch_in_room' => 'boolean',
+        'dinner_in_room' => 'boolean',
+        'is_room_complimentary' => 'boolean',
+        'is_meal_complimentary' => 'boolean',
     ];
+
+    public function mealPlanEnum(): MealPlan
+    {
+        if ($this->meal_plan === MealPlan::COMP->value) {
+            return MealPlan::BB;
+        }
+
+        return MealPlan::parse($this->meal_plan);
+    }
+
+    public function isRoomComplimentary(): bool
+    {
+        return (bool) $this->is_room_complimentary;
+    }
+
+    public function isMealComplimentary(): bool
+    {
+        return (bool) $this->is_meal_complimentary || $this->meal_plan === MealPlan::COMP->value;
+    }
+
+    public function hasComplimentaryService(): bool
+    {
+        return $this->isRoomComplimentary() || $this->isMealComplimentary();
+    }
+
+    public function complimentaryServicesLabel(): string
+    {
+        $room = $this->isRoomComplimentary();
+        $meal = $this->isMealComplimentary();
+
+        if ($room && $meal) {
+            return 'Room & meals';
+        }
+        if ($room) {
+            return 'Room only';
+        }
+        if ($meal) {
+            return 'Meals only';
+        }
+
+        return '—';
+    }
+
+    public function mealIncludes(string $meal): bool
+    {
+        if ($this->isMealComplimentary()) {
+            return true;
+        }
+
+        return match ($meal) {
+            'breakfast' => $this->mealPlanEnum()->includesBreakfast(),
+            'lunch' => $this->mealPlanEnum()->includesLunch(),
+            'dinner' => $this->mealPlanEnum()->includesDinner(),
+            default => false,
+        };
+    }
 
     public function hotel(): BelongsTo
     {
@@ -71,6 +149,11 @@ class Reservation extends Model
     public function preRegistrations(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(PreRegistration::class);
+    }
+
+    public function guests(): HasMany
+    {
+        return $this->hasMany(ReservationGuest::class)->orderBy('sort_order');
     }
 
     /** POS/Restaurant invoices assigned to this reservation (room charge or otherwise linked). */

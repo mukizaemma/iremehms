@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\PaymentPurpose;
+use App\Services\ReservationPaymentRecordingService;
 use App\Support\PaymentCatalog;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,6 +15,9 @@ class ReservationPayment extends Model
         'reservation_id',
         'amount',
         'currency',
+        'foreign_currency',
+        'foreign_amount',
+        'exchange_rate',
         'payment_type',
         'payment_method',
         'payment_status',
@@ -28,10 +33,13 @@ class ReservationPayment extends Model
         'balance_after',
         'is_debt_settlement',
         'revenue_attribution_date',
+        'payment_purpose',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
+        'foreign_amount' => 'decimal:2',
+        'exchange_rate' => 'decimal:6',
         'total_paid_after' => 'decimal:2',
         'balance_after' => 'decimal:2',
         'received_at' => 'datetime',
@@ -58,6 +66,17 @@ class ReservationPayment extends Model
     /**
      * Date key (Y-m-d) used for rooms sales / payment reports: back-dated debt settlements use revenue_attribution_date.
      */
+    public function resolvedPaymentPurpose(): PaymentPurpose
+    {
+        $stored = PaymentPurpose::tryFrom((string) ($this->payment_purpose ?? ''));
+
+        if ($stored) {
+            return $stored;
+        }
+
+        return ReservationPaymentRecordingService::purposeFromLegacy((bool) $this->is_debt_settlement);
+    }
+
     public function effectiveReportDateYmd(): string
     {
         if ($this->revenue_attribution_date) {

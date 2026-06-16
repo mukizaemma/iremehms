@@ -1,7 +1,6 @@
 <div class="container-fluid py-4">
     <div class="mb-3">
         <h5 class="mb-2 fw-bold">Wellness</h5>
-        @include('livewire.front-office.partials.front-office-quick-nav')
         <div class="mt-2">
             <div class="btn-group btn-group-sm">
                 <button type="button" class="btn {{ $tab === 'services' ? 'btn-primary' : 'btn-outline-primary' }}" wire:click="$set('tab', 'services')">Services</button>

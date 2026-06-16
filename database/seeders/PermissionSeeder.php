@@ -67,10 +67,12 @@ class PermissionSeeder extends Seeder
             ['name' => 'Check-in / Check-out', 'slug' => 'fo_check_in_out', 'module_slug' => 'front-office', 'description' => 'Check-in and check-out guests'],
             ['name' => 'View all guest bills', 'slug' => 'fo_view_guest_bills', 'module_slug' => 'front-office', 'description' => 'View rooms + POS charges'],
             ['name' => 'Collect payment', 'slug' => 'fo_collect_payment', 'module_slug' => 'front-office', 'description' => 'Collect payment at checkout'],
+            ['name' => 'Operational day audit', 'slug' => 'fo_operational_audit', 'module_slug' => 'front-office', 'description' => 'Run end-of-day checklist: balances, cash, POS, communications, shifts'],
             ['name' => 'Post charges', 'slug' => 'fo_post_charges', 'module_slug' => 'front-office', 'description' => 'Post accommodation charges'],
             ['name' => 'Guest communications', 'slug' => 'fo_guest_comms', 'module_slug' => 'front-office', 'description' => 'View guest lists and send one-to-one or bulk communications (email/SMS).'],
             ['name' => 'Proforma invoices', 'slug' => 'fo_proforma_manage', 'module_slug' => 'front-office', 'description' => 'Create proforma quotations for groups and events; record post-event payments'],
             ['name' => 'Wellness services', 'slug' => 'fo_wellness_manage', 'module_slug' => 'front-office', 'description' => 'Manage wellness offerings and record visit, daily, or subscription payments'],
+            ['name' => 'Restaurant meal board', 'slug' => 'fo_restaurant_meals', 'module_slug' => 'front-office', 'description' => 'View in-house guest lists for breakfast, lunch and dinner by board basis'],
             ['name' => 'Verify proforma invoices', 'slug' => 'fo_proforma_verify', 'module_slug' => 'front-office', 'description' => 'Approve or reject proformas submitted by reception'],
 
             // Recovery

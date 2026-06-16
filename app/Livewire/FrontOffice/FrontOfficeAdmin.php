@@ -2,6 +2,7 @@
 
 namespace App\Livewire\FrontOffice;
 
+use App\Enums\PaymentPurpose;
 use App\Models\ActivityLog;
 use App\Models\Hotel;
 use App\Models\Reservation;
@@ -14,7 +15,10 @@ use App\Models\Invoice;
 use App\Models\SupportRequest;
 use App\Services\ActivityLogger;
 use App\Services\OperationalShiftActionGate;
+use App\Services\ReservationEarlyCheckoutService;
+use App\Services\ReservationPaymentRecordingService;
 use App\Support\ActivityLogModule;
+use App\Support\ForeignCurrencyPaymentSupport;
 use App\Support\PaymentCatalog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -157,10 +161,16 @@ class FrontOfficeAdmin extends Component
     public bool $payment_cash_submit_later = false;
     public $payment_client_reference = '';
     public $payment_amount = '';
+    /** @deprecated Kept for legacy payment rows; new payments use base currency in amount + foreign_* columns. */
     public $payment_currency = 'INR';
+    public bool $use_international_currency = false;
+    public string $foreign_currency = 'USD';
+    public string $exchange_rate = '';
+    public string $amount_in_foreign = '';
+    public string $amount_in_local = '';
     public $payment_comment = '';
 
-    public bool $payment_is_debt_settlement = false;
+    public string $paymentPurpose = 'current_stay';
 
     /** Y-m-d — rooms sales date when settling outstanding debt */
     public string $payment_revenue_attribution_date = '';
@@ -388,6 +398,75 @@ class FrontOfficeAdmin extends Component
                 ]);
             }
         }
+
+        $this->sortRoomTypesForCalendar();
+    }
+
+    /**
+     * Rooms with reservations in the visible date range appear first (booked units before vacant).
+     */
+    protected function sortRoomTypesForCalendar(): void
+    {
+        if ($this->roomTypes === [] || $this->dates === []) {
+            return;
+        }
+
+        $start = $this->dates[0];
+        $end = $this->dates[count($this->dates) - 1];
+        $bookedBedKeys = [];
+
+        foreach ($this->bookings as $booking) {
+            $bedKey = (string) ($booking['bed_key'] ?? '');
+            if ($bedKey === '' || str_starts_with($bedKey, 'r')) {
+                continue;
+            }
+            $from = (string) ($booking['from'] ?? '');
+            $to = (string) ($booking['to'] ?? '');
+            if ($from <= $end && $to >= $start) {
+                $bookedBedKeys[$bedKey] = true;
+            }
+        }
+
+        $typesWithBookings = [];
+        $typesWithoutBookings = [];
+
+        foreach ($this->roomTypes as $slug => $roomType) {
+            $beds = $roomType['beds'] ?? [];
+            usort($beds, function (array $a, array $b) use ($bookedBedKeys): int {
+                $aBooked = isset($bookedBedKeys[(string) ($a['id'] ?? '')]);
+                $bBooked = isset($bookedBedKeys[(string) ($b['id'] ?? '')]);
+                if ($aBooked !== $bBooked) {
+                    return $bBooked <=> $aBooked;
+                }
+
+                return strnatcasecmp((string) ($a['label'] ?? ''), (string) ($b['label'] ?? ''));
+            });
+
+            $typeHasBooking = false;
+            foreach ($beds as $bed) {
+                if (isset($bookedBedKeys[(string) ($bed['id'] ?? '')])) {
+                    $typeHasBooking = true;
+                    break;
+                }
+            }
+
+            $entry = [
+                'name' => $roomType['name'],
+                'beds' => $beds,
+            ];
+
+            if ($typeHasBooking) {
+                $typesWithBookings[$slug] = $entry;
+            } else {
+                $typesWithoutBookings[$slug] = $entry;
+            }
+        }
+
+        $sortByName = fn (array $a, array $b): int => strnatcasecmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+        uasort($typesWithBookings, $sortByName);
+        uasort($typesWithoutBookings, $sortByName);
+
+        $this->roomTypes = array_merge($typesWithBookings, $typesWithoutBookings);
     }
 
     protected function buildDates(): void
@@ -750,6 +829,9 @@ class FrontOfficeAdmin extends Component
     public $showCheckoutModal = false;
     public $checkoutReservationId = null;
 
+    /** Departure date Y-m-d used to prorate nights on checkout (≤ booked checkout). */
+    public string $checkoutEffectiveDepartureDate = '';
+
     public function openCheckoutModal(): void
     {
         $user = Auth::user();
@@ -765,7 +847,12 @@ class FrontOfficeAdmin extends Component
             session()->flash('error', 'Only in-house guests can be checked out.');
             return;
         }
+        $hotel = Hotel::getHotel();
         $this->checkoutReservationId = $reservationId;
+        $reservation = $hotel ? Reservation::where('hotel_id', $hotel->id)->find($reservationId) : null;
+        $this->checkoutEffectiveDepartureDate = $reservation
+            ? ReservationEarlyCheckoutService::defaultDepartureCandidate($reservation)
+            : '';
         $this->showCheckoutModal = true;
     }
 
@@ -790,6 +877,7 @@ class FrontOfficeAdmin extends Component
         }
 
         $this->checkoutReservationId = $reservationId;
+        $this->checkoutEffectiveDepartureDate = ReservationEarlyCheckoutService::defaultDepartureCandidate($reservation);
         $this->showCheckoutModal = true;
     }
 
@@ -797,28 +885,53 @@ class FrontOfficeAdmin extends Component
     {
         $this->showCheckoutModal = false;
         $this->checkoutReservationId = null;
+        $this->checkoutEffectiveDepartureDate = '';
     }
 
     /** Data for checkout modal: reservation, folio summary, linked POS/restaurant invoices, can_confirm. */
     public function getCheckoutSummary(): array
     {
+        $empty = [
+            'reservation' => null,
+            'folio' => null,
+            'invoices' => [],
+            'payments' => [],
+            'can_confirm' => false,
+            'early_checkout' => null,
+            'stay_invoice' => null,
+            'checkout_invoice_print_url' => null,
+            'payments_snapshot_note' => null,
+        ];
+
         if (! $this->checkoutReservationId) {
-            return ['reservation' => null, 'folio' => null, 'invoices' => [], 'payments' => [], 'can_confirm' => false];
+            return $empty;
         }
         $hotel = Hotel::getHotel();
-        $reservation = Reservation::where('hotel_id', $hotel->id)->with('invoices')->find($this->checkoutReservationId);
-        if (! $reservation) {
-            return ['reservation' => null, 'folio' => null, 'invoices' => [], 'payments' => [], 'can_confirm' => false];
+        if (! $hotel) {
+            return $empty;
         }
-        $total = (float) ($reservation->total_amount ?? 0);
+        $reservation = Reservation::where('hotel_id', $hotel->id)->with(['invoices', 'roomUnits'])->find($this->checkoutReservationId);
+        if (! $reservation) {
+            return $empty;
+        }
+
+        $early = ReservationEarlyCheckoutService::preview($reservation, $this->checkoutEffectiveDepartureDate);
+
+        $adjustedTotal = (float) ($early['adjusted_total_amount'] ?? 0);
         $paid = (float) ($reservation->paid_amount ?? 0);
-        $balance = max(0, $total - $paid);
+        $balanceRaw = round($adjustedTotal - $paid, 2);
+        $balance = max(0.0, $balanceRaw);
+        $currency = $reservation->currency ?? 'RWF';
+
         $folio = [
-            'total' => $total,
+            'total' => $adjustedTotal,
             'paid' => $paid,
             'balance' => $balance,
-            'currency' => $reservation->currency ?? 'RWF',
+            'balance_raw' => $balanceRaw,
+            'currency' => $currency,
+            'booked_total' => (float) ($early['originally_booked_total'] ?? 0),
         ];
+
         $invoices = [];
         foreach ($reservation->invoices as $inv) {
             $paymentLabel = 'Unpaid';
@@ -840,7 +953,10 @@ class FrontOfficeAdmin extends Component
                 'is_settled' => $inv->invoice_status === 'PAID' || $inv->invoice_status === 'CREDIT',
             ];
         }
-        $reservationSettled = $balance <= 0;
+
+        /** Settled vs prorated stay folio (POS invoices unchanged). */
+        $reservationSettled = $balanceRaw <= 0.02;
+
         $allInvoicesSettled = true;
         foreach ($invoices as $inv) {
             if (! ($inv['is_settled'] ?? false)) {
@@ -850,7 +966,6 @@ class FrontOfficeAdmin extends Component
         }
         $can_confirm = $reservationSettled && $allInvoicesSettled;
 
-        // Hotel-side payments (who received what) for shift transparency + receipts.
         $payments = [];
         $hotelPayments = ReservationPayment::where('hotel_id', $hotel->id)
             ->where('reservation_id', $reservation->id)
@@ -884,6 +999,12 @@ class FrontOfficeAdmin extends Component
             'invoices' => $invoices,
             'payments' => $payments,
             'can_confirm' => $can_confirm,
+            'early_checkout' => $early,
+            'stay_invoice' => $early['accommodation_invoice'] ?? null,
+            'checkout_invoice_print_url' => route('front-office.checkout-settlement-print', ['reservation' => $reservation->id]).'?departure='.urlencode((string) ($early['departure_ymd'] ?? '')),
+            'payments_snapshot_note' => ($early['is_proration'] ?? false)
+                ? '“After balance” on receipts above reflects the pre-adjustment folio.'
+                : null,
         ];
     }
 
@@ -897,6 +1018,20 @@ class FrontOfficeAdmin extends Component
             session()->flash('error', 'Cannot checkout until reservation balance is paid and all restaurant/invoice charges are paid or assigned (room/hotel/credit).');
             return;
         }
+        $hotel = Hotel::getHotel();
+        $reservation = $hotel ? Reservation::where('hotel_id', $hotel->id)->find($this->checkoutReservationId) : null;
+        if (! $reservation) {
+            return;
+        }
+
+        try {
+            ReservationEarlyCheckoutService::applyDepartureSettlement($reservation, $this->checkoutEffectiveDepartureDate, Auth::user());
+        } catch (\Throwable $e) {
+            session()->flash('error', $e->getMessage());
+
+            return;
+        }
+
         $this->checkOutReservation($this->checkoutReservationId);
         $this->closeCheckoutModal();
     }
@@ -922,8 +1057,7 @@ class FrontOfficeAdmin extends Component
     public $sidebarPaymentClientReference = '';
     public bool $sidebarCashSubmitLater = false;
 
-    /** When true, this payment settles outstanding folio debt; revenue can be attributed to a past sales date. */
-    public bool $sidebarDebtSettlement = false;
+    public string $sidebarPaymentPurpose = 'current_stay';
 
     /** Y-m-d — counted in rooms sales on this date when settling debt (defaults to checkout). */
     public string $sidebarRevenueAttributionDate = '';
@@ -938,14 +1072,14 @@ class FrontOfficeAdmin extends Component
         $this->sidebarPaymentUnified = PaymentCatalog::METHOD_CASH;
         $this->sidebarPaymentClientReference = '';
         $this->sidebarCashSubmitLater = false;
-        $this->sidebarDebtSettlement = false;
+        $this->sidebarPaymentPurpose = PaymentPurpose::CurrentStay->value;
         $this->sidebarRevenueAttributionDate = (string) ($this->selectedBooking['to'] ?? '');
         $this->showSidebarRecordPaymentModal = true;
     }
 
-    public function updatedSidebarDebtSettlement(bool $value): void
+    public function updatedSidebarPaymentPurpose(string $value): void
     {
-        if ($value && $this->sidebarRevenueAttributionDate === '' && $this->selectedBooking) {
+        if ($value === PaymentPurpose::DebtSettlement->value && $this->sidebarRevenueAttributionDate === '' && $this->selectedBooking) {
             $this->sidebarRevenueAttributionDate = (string) ($this->selectedBooking['to'] ?? '');
         }
     }
@@ -956,7 +1090,7 @@ class FrontOfficeAdmin extends Component
         $this->sidebarPaymentAmount = '';
         $this->sidebarPaymentClientReference = '';
         $this->sidebarCashSubmitLater = false;
-        $this->sidebarDebtSettlement = false;
+        $this->sidebarPaymentPurpose = PaymentPurpose::CurrentStay->value;
         $this->sidebarRevenueAttributionDate = '';
     }
 
@@ -974,7 +1108,8 @@ class FrontOfficeAdmin extends Component
         if (PaymentCatalog::unifiedChoiceRequiresClientDetails($this->sidebarPaymentUnified)) {
             $rules['sidebarPaymentClientReference'] = 'required|string|min:2|max:500';
         }
-        if ($this->sidebarDebtSettlement) {
+        $sidebarPurpose = PaymentPurpose::parse($this->sidebarPaymentPurpose);
+        if ($sidebarPurpose === PaymentPurpose::DebtSettlement) {
             $rules['sidebarRevenueAttributionDate'] = 'required|date';
         }
         $this->validate($rules, [], [
@@ -1000,10 +1135,11 @@ class FrontOfficeAdmin extends Component
         $pStatus = PaymentCatalog::normalizeStatus($stored['payment_status']);
         $comment = PaymentCatalog::mergeClientReferenceIntoComment('', $this->sidebarPaymentClientReference ?? '');
 
-        $revenueAttr = null;
-        if ($this->sidebarDebtSettlement) {
-            $revenueAttr = $this->sidebarRevenueAttributionDate ?: ($reservation->check_out_date?->format('Y-m-d'));
-        }
+        $purposeFields = ReservationPaymentRecordingService::resolvePurposeFields(
+            $sidebarPurpose,
+            $reservation,
+            $this->sidebarRevenueAttributionDate,
+        );
 
         $payment = ReservationPayment::create([
             'hotel_id' => $hotel->id,
@@ -1020,8 +1156,9 @@ class FrontOfficeAdmin extends Component
             'comment' => $comment !== '' ? $comment : null,
             'total_paid_after' => 0,
             'balance_after' => 0,
-            'is_debt_settlement' => $this->sidebarDebtSettlement,
-            'revenue_attribution_date' => $revenueAttr,
+            'payment_purpose' => $purposeFields['payment_purpose'],
+            'is_debt_settlement' => $purposeFields['is_debt_settlement'],
+            'revenue_attribution_date' => $purposeFields['revenue_attribution_date'],
         ]);
 
         ActivityLogger::log(
@@ -1201,7 +1338,11 @@ class FrontOfficeAdmin extends Component
                 'settlement_status' => $ns,
                 'payment_display' => PaymentCatalog::formatPaymentLineForReport($p->payment_method, $p->payment_status),
                 'amount' => number_format((float) $p->amount, 2, '.', ''),
+                'amount_display' => ForeignCurrencyPaymentSupport::formatDisplay($p),
                 'currency' => $p->currency ?? $currency,
+                'foreign_currency' => $p->foreign_currency,
+                'foreign_amount' => $p->foreign_amount,
+                'exchange_rate' => $p->exchange_rate,
                 'user' => $p->receivedBy?->name ?? '—',
                 'balance_after' => number_format((float) ($p->balance_after ?? 0), 2, '.', ''),
                 'status' => $p->status,
@@ -1455,21 +1596,49 @@ class FrontOfficeAdmin extends Component
         $this->payment_amount = $totals['balance'] ?? '0.00';
         $hotelCurrency = Hotel::getHotel()->currency ?? 'RWF';
         $this->payment_currency = in_array($hotelCurrency, ['INR', 'USD', 'RWF', 'EUR'], true) ? $hotelCurrency : 'RWF';
+        $this->use_international_currency = false;
+        $this->foreign_currency = 'USD';
+        $this->exchange_rate = '';
+        $this->amount_in_foreign = '';
+        $this->amount_in_local = '';
         $this->payment_comment = '';
-        $this->payment_is_debt_settlement = false;
+        $this->paymentPurpose = PaymentPurpose::CurrentStay->value;
         $resId = (int) ($this->editingReservation['reservation_id'] ?? 0);
         $resRow = $resId > 0 ? Reservation::where('hotel_id', Hotel::getHotel()->id)->find($resId) : null;
         $this->payment_revenue_attribution_date = $resRow?->check_out_date?->format('Y-m-d') ?? '';
 
         // Used to render current balance + linked POS invoices in the modal.
         $this->checkoutReservationId = (int) ($this->editingReservation['reservation_id'] ?? 0);
+        $this->checkoutEffectiveDepartureDate = $resRow
+            ? ReservationEarlyCheckoutService::defaultDepartureCandidate($resRow)
+            : '';
         $this->paymentCheckoutSummary = $this->getCheckoutSummary();
     }
 
-    public function updatedPaymentIsDebtSettlement(bool $value): void
+    public function updatedPaymentPurpose(string $value): void
     {
-        if ($value && $this->payment_revenue_attribution_date === '' && $this->editingReservation) {
+        if ($value === PaymentPurpose::DebtSettlement->value && $this->payment_revenue_attribution_date === '' && $this->editingReservation) {
             $this->payment_revenue_attribution_date = (string) ($this->editingReservation['to'] ?? '');
+        }
+    }
+
+    public function updatedAmountInForeign(): void
+    {
+        if ($this->exchange_rate !== '' && is_numeric($this->exchange_rate) && $this->amount_in_foreign !== '' && is_numeric($this->amount_in_foreign)) {
+            $this->amount_in_local = (string) ForeignCurrencyPaymentSupport::convertForeignToLocal(
+                (float) $this->amount_in_foreign,
+                (float) $this->exchange_rate
+            );
+        }
+    }
+
+    public function updatedAmountInLocal(): void
+    {
+        if ($this->exchange_rate !== '' && is_numeric($this->exchange_rate) && $this->amount_in_local !== '' && is_numeric($this->amount_in_local)) {
+            $this->amount_in_foreign = (string) ForeignCurrencyPaymentSupport::convertLocalToForeign(
+                (float) $this->amount_in_local,
+                (float) $this->exchange_rate
+            );
         }
     }
 
@@ -1491,8 +1660,17 @@ class FrontOfficeAdmin extends Component
         $this->payment_client_reference = '';
         $this->payment_amount = $payment['amount'] ?? '0.00';
         $this->payment_currency = $payment['currency'] ?? 'INR';
+        $this->use_international_currency = (bool) ($payment['use_international_currency'] ?? false);
+        $this->foreign_currency = (string) ($payment['foreign_currency'] ?? 'USD');
+        $this->exchange_rate = $payment['exchange_rate'] !== null && $payment['exchange_rate'] !== ''
+            ? (string) $payment['exchange_rate']
+            : '';
+        $this->amount_in_foreign = $payment['foreign_amount'] !== null && $payment['foreign_amount'] !== ''
+            ? number_format((float) $payment['foreign_amount'], 2, '.', '')
+            : '';
+        $this->amount_in_local = $payment['amount'] ?? '0.00';
         $this->payment_comment = (string) ($payment['comment'] ?? '');
-        $this->payment_is_debt_settlement = (bool) ($payment['is_debt_settlement'] ?? false);
+        $this->paymentPurpose = (string) ($payment['payment_purpose'] ?? PaymentPurpose::CurrentStay->value);
         $this->payment_revenue_attribution_date = (string) ($payment['revenue_attribution_date'] ?? '');
     }
 
@@ -1527,9 +1705,14 @@ class FrontOfficeAdmin extends Component
             'cash_submit_later' => $normMethod === PaymentCatalog::METHOD_CASH && $normStatus === PaymentCatalog::STATUS_PENDING,
             'amount' => number_format((float) ($payment->amount ?? 0), 2, '.', ''),
             'currency' => $payment->currency ?? ($this->editingReservation['currency'] ?? ($hotel->currency ?? 'RWF')),
+            'foreign_currency' => $payment->foreign_currency,
+            'foreign_amount' => $payment->foreign_amount,
+            'exchange_rate' => $payment->exchange_rate,
+            'use_international_currency' => ForeignCurrencyPaymentSupport::hasForeign($payment),
             'user' => $payment->receivedBy?->name ?? '—',
             'status' => $payment->status,
             'comment' => $payment->comment,
+            'payment_purpose' => $payment->resolvedPaymentPurpose()->value,
             'is_debt_settlement' => (bool) ($payment->is_debt_settlement ?? false),
             'revenue_attribution_date' => $payment->revenue_attribution_date?->format('Y-m-d') ?? '',
         ];
@@ -1540,7 +1723,7 @@ class FrontOfficeAdmin extends Component
         $this->showAddPaymentModal = false;
         $this->editingPaymentId = null;
         $this->paymentCheckoutSummary = [];
-        $this->payment_is_debt_settlement = false;
+        $this->paymentPurpose = PaymentPurpose::CurrentStay->value;
         $this->payment_revenue_attribution_date = '';
     }
 
@@ -1806,12 +1989,20 @@ class FrontOfficeAdmin extends Component
         $rules = [
             'payment_date' => 'required|string',
             'payment_unified' => ['required', Rule::in(PaymentCatalog::unifiedAccommodationValues())],
-            'payment_amount' => 'required|numeric|min:0.01',
         ];
+        if (! $this->use_international_currency) {
+            $rules['payment_amount'] = 'required|numeric|min:0.01';
+        } else {
+            $rules['foreign_currency'] = ['required', Rule::in(ForeignCurrencyPaymentSupport::OPTIONS)];
+            $rules['exchange_rate'] = 'required|numeric|min:0.0001';
+            $rules['amount_in_foreign'] = 'required_without:amount_in_local|nullable|numeric|min:0.01';
+            $rules['amount_in_local'] = 'required_without:amount_in_foreign|nullable|numeric|min:0.01';
+        }
         if (PaymentCatalog::unifiedChoiceRequiresClientDetails($this->payment_unified)) {
             $rules['payment_client_reference'] = 'required|string|min:2|max:500';
         }
-        if ($this->payment_is_debt_settlement) {
+        $paymentPurpose = PaymentPurpose::parse($this->paymentPurpose);
+        if ($paymentPurpose === PaymentPurpose::DebtSettlement) {
             $rules['payment_revenue_attribution_date'] = 'required|date';
         }
         $this->validate($rules, [], [
@@ -1819,6 +2010,10 @@ class FrontOfficeAdmin extends Component
             'payment_unified' => 'Payment type',
             'payment_client_reference' => 'Client / account details',
             'payment_amount' => 'Amount',
+            'foreign_currency' => 'Currency',
+            'exchange_rate' => 'Exchange rate',
+            'amount_in_foreign' => 'Foreign amount',
+            'amount_in_local' => 'Local amount',
             'payment_revenue_attribution_date' => 'Sales / revenue date',
         ]);
         $reservationId = (int) ($this->editingReservation['reservation_id'] ?? 0);
@@ -1841,18 +2036,33 @@ class FrontOfficeAdmin extends Component
             $receivedAt = Carbon::now()->format('Y-m-d H:i:s');
         }
 
-        $currency = $this->payment_currency ?: ($reservation->currency ?? ($hotel->currency ?? 'RWF'));
-        $amount = (float) $this->payment_amount;
+        $paymentStorage = ForeignCurrencyPaymentSupport::resolveStorage(
+            $hotel,
+            $this->use_international_currency,
+            $this->foreign_currency,
+            $this->exchange_rate,
+            $this->amount_in_foreign,
+            $this->amount_in_local,
+            $this->payment_amount,
+        );
+        $currency = $paymentStorage['currency'];
+        $amount = (float) $paymentStorage['amount'];
+        $foreignColumns = [
+            'foreign_currency' => $paymentStorage['foreign_currency'],
+            'foreign_amount' => $paymentStorage['foreign_amount'],
+            'exchange_rate' => $paymentStorage['exchange_rate'],
+        ];
         $cashLater = $this->payment_unified === PaymentCatalog::METHOD_CASH && $this->payment_cash_submit_later;
         $stored = PaymentCatalog::expandUnifiedToStorage($this->payment_unified, $cashLater);
         $method = PaymentCatalog::normalizeReservationMethod($stored['payment_method']);
         $pStatus = PaymentCatalog::normalizeStatus($stored['payment_status']);
         $finalComment = PaymentCatalog::mergeClientReferenceIntoComment($this->payment_comment ?? '', $this->payment_client_reference ?? '');
 
-        $revenueAttr = null;
-        if ($this->payment_is_debt_settlement) {
-            $revenueAttr = $this->payment_revenue_attribution_date ?: ($reservation->check_out_date?->format('Y-m-d'));
-        }
+        $purposeFields = ReservationPaymentRecordingService::resolvePurposeFields(
+            $paymentPurpose,
+            $reservation,
+            $this->payment_revenue_attribution_date,
+        );
 
         $userId = (int) (Auth::user()?->id ?? 0);
         if ($userId <= 0) {
@@ -1884,6 +2094,7 @@ class FrontOfficeAdmin extends Component
             $payment->update([
                 'amount' => $amount,
                 'currency' => $currency,
+                ...$foreignColumns,
                 'payment_type' => $method,
                 'payment_method' => $method,
                 'payment_status' => $pStatus,
@@ -1894,8 +2105,9 @@ class FrontOfficeAdmin extends Component
                 'voided_at' => null,
                 'voided_by' => null,
                 'void_reason' => null,
-                'is_debt_settlement' => $this->payment_is_debt_settlement,
-                'revenue_attribution_date' => $revenueAttr,
+                'payment_purpose' => $purposeFields['payment_purpose'],
+                'is_debt_settlement' => $purposeFields['is_debt_settlement'],
+                'revenue_attribution_date' => $purposeFields['revenue_attribution_date'],
             ]);
 
             ActivityLogger::log(
@@ -1929,6 +2141,7 @@ class FrontOfficeAdmin extends Component
                 'reservation_id' => $reservationId,
                 'amount' => $amount,
                 'currency' => $currency,
+                ...$foreignColumns,
                 'payment_type' => $method,
                 'payment_method' => $method,
                 'payment_status' => $pStatus,
@@ -1939,8 +2152,9 @@ class FrontOfficeAdmin extends Component
                 'comment' => $finalComment !== '' ? $finalComment : null,
                 'total_paid_after' => 0,
                 'balance_after' => 0,
-                'is_debt_settlement' => $this->payment_is_debt_settlement,
-                'revenue_attribution_date' => $revenueAttr,
+                'payment_purpose' => $purposeFields['payment_purpose'],
+                'is_debt_settlement' => $purposeFields['is_debt_settlement'],
+                'revenue_attribution_date' => $purposeFields['revenue_attribution_date'],
             ]);
             $this->lastRecordedPaymentId = (int) $payment->id;
 
@@ -1989,7 +2203,7 @@ class FrontOfficeAdmin extends Component
         $this->payment_amount = $remaining > 0 ? number_format($remaining, 2, '.', '') : '0.00';
         $this->payment_comment = '';
         $this->payment_client_reference = '';
-        $this->payment_is_debt_settlement = false;
+        $this->paymentPurpose = PaymentPurpose::CurrentStay->value;
         $this->payment_revenue_attribution_date = $reservation->check_out_date?->format('Y-m-d') ?? '';
     }
 

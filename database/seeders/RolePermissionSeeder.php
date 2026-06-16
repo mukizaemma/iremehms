@@ -21,7 +21,8 @@ class RolePermissionSeeder extends Seeder
             'pos_take_orders', 'pos_send_to_station', 'pos_request_void', 'pos_approve_void', 'pos_approve_receipt_modification', 'pos_confirm_payment', 'pos_print_receipt', 'pos_transfer_order', 'pos_post_to_room', 'pos_split_bill', 'pos_audit', 'pos_full_oversight', 'pos_view_station_orders', 'pos_mark_station_ready', 'pos_open_shift', 'pos_close_shift',
             'stock_create_requisition', 'stock_receive_goods', 'stock_issue', 'stock_request_internal', 'stock_approve_purchase', 'stock_audit', 'stock_logistics', 'stock_authorize_requests', 'stock_open_shift', 'stock_close_shift',
             'fo_availability', 'fo_create_reservation', 'fo_check_in_out', 'fo_open_shift', 'fo_close_shift', 'fo_view_guest_bills', 'fo_collect_payment', 'fo_post_charges',
-            'fo_proforma_manage', 'fo_wellness_manage', 'fo_proforma_verify',
+            'fo_operational_audit',
+            'fo_proforma_manage', 'fo_wellness_manage', 'fo_restaurant_meals', 'fo_proforma_verify',
             'shift_open_global', 'shift_close_global',
             'recovery_view_unpaid', 'recovery_view_credits', 'recovery_view_room_charges', 'recovery_flag_accountability',
             'reports_costs_revenues', 'reports_margin', 'reports_financial_export', 'reports_view_all',
@@ -37,24 +38,29 @@ class RolePermissionSeeder extends Seeder
 
         $this->assignByRoleSlug('waiter', [
             'pos_take_orders', 'pos_send_to_station', 'pos_request_void', 'pos_transfer_order', 'pos_post_to_room', 'pos_split_bill',
+            'fo_restaurant_meals',
         ]);
 
         $this->assignByRoleSlug('barman', [
             'pos_send_to_station', 'pos_request_void', 'pos_mark_station_ready',
+            'fo_restaurant_meals',
         ]);
 
         $this->assignByRoleSlug('cashier', [
             'pos_confirm_payment', 'pos_print_receipt', 'pos_split_bill',
+            'fo_restaurant_meals',
         ]);
 
         $this->assignByRoleSlug('restaurant-manager', [
             'pos_take_orders', 'pos_send_to_station', 'pos_request_void', 'pos_approve_void', 'pos_confirm_payment', 'pos_print_receipt', 'pos_transfer_order', 'pos_post_to_room', 'pos_split_bill', 'pos_view_station_orders', 'pos_mark_station_ready', 'pos_open_shift', 'pos_close_shift',
+            'fo_restaurant_meals',
         ]);
 
         $this->assignByRoleSlug('receptionist', [
             'fo_availability', 'fo_create_reservation', 'fo_check_in_out', 'fo_open_shift', 'fo_close_shift', 'fo_view_guest_bills', 'fo_collect_payment', 'fo_post_charges',
+            'fo_operational_audit',
             'fo_guest_comms',
-            'fo_proforma_manage', 'fo_wellness_manage',
+            'fo_proforma_manage', 'fo_wellness_manage', 'fo_restaurant_meals',
         ]);
 
         $this->assignByRoleSlug('store-keeper', [
@@ -84,7 +90,8 @@ class RolePermissionSeeder extends Seeder
             'pos_take_orders', 'pos_send_to_station', 'pos_request_void', 'pos_approve_void', 'pos_confirm_payment', 'pos_print_receipt', 'pos_transfer_order', 'pos_post_to_room', 'pos_split_bill', 'pos_mark_station_ready', 'pos_open_shift', 'pos_close_shift',
             'stock_create_requisition', 'stock_receive_goods', 'stock_issue', 'stock_request_internal', 'stock_open_shift', 'stock_close_shift',
             'fo_availability', 'fo_create_reservation', 'fo_check_in_out', 'fo_open_shift', 'fo_close_shift', 'fo_view_guest_bills', 'fo_collect_payment', 'fo_post_charges',
-            'fo_proforma_manage', 'fo_wellness_manage', 'fo_proforma_verify',
+            'fo_operational_audit',
+            'fo_proforma_manage', 'fo_wellness_manage', 'fo_restaurant_meals', 'fo_proforma_verify',
         ]);
 
         $this->assignByRoleSlug('admin-officer', [
@@ -102,7 +109,8 @@ class RolePermissionSeeder extends Seeder
             'pos_take_orders', 'pos_send_to_station', 'pos_request_void', 'pos_approve_void', 'pos_approve_receipt_modification', 'pos_confirm_payment', 'pos_print_receipt', 'pos_transfer_order', 'pos_post_to_room', 'pos_split_bill', 'pos_audit', 'pos_full_oversight', 'pos_view_station_orders', 'pos_mark_station_ready', 'pos_open_shift', 'pos_close_shift',
             'stock_create_requisition', 'stock_receive_goods', 'stock_issue', 'stock_request_internal', 'stock_approve_purchase', 'stock_audit', 'stock_logistics', 'stock_authorize_requests', 'stock_open_shift', 'stock_close_shift',
             'fo_availability', 'fo_create_reservation', 'fo_check_in_out', 'fo_open_shift', 'fo_close_shift', 'fo_view_guest_bills', 'fo_collect_payment', 'fo_post_charges',
-            'fo_proforma_manage', 'fo_wellness_manage', 'fo_proforma_verify',
+            'fo_operational_audit',
+            'fo_proforma_manage', 'fo_wellness_manage', 'fo_restaurant_meals', 'fo_proforma_verify',
             'shift_open_global', 'shift_close_global',
             'recovery_view_unpaid', 'recovery_view_credits', 'recovery_view_room_charges', 'recovery_flag_accountability',
             'reports_costs_revenues', 'reports_margin', 'reports_financial_export', 'reports_view_all',

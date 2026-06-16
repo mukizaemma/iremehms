@@ -12,6 +12,7 @@ use App\Models\RoomType;
 use App\Models\RoomUnit;
 use App\Models\ReservationPayment;
 use App\Models\SupportRequest;
+use App\Support\ForeignCurrencyPaymentSupport;
 use App\Support\PaymentCatalog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -30,6 +31,8 @@ class AddReservation extends Component
     public $check_in_time = '13:00';
     public $check_out_date = '';
     public $check_out_time = '11:00';
+    /** Assign a specific room/unit now, or only room type until check-in / edit */
+    public string $room_assignment = 'later';
     public $rooms_count = 1;
     /** Single booking (default) or group booking */
     public $is_group_booking = false;
@@ -44,7 +47,8 @@ class AddReservation extends Component
     public $selected_ota = '';
     /** When Business Source = Social media: which page/account */
     public $social_media_page = '';
-    /** When Business Source = Referral: person and phone */
+    /** When Business Source = Referral: category and optional contact */
+    public string $referral_type = '';
     public $referral_name = '';
     public $referral_phone = '';
 
@@ -82,12 +86,21 @@ class AddReservation extends Component
     public $guest_suggestions = [];
     /** Set true after user confirms the past client is added to the form */
     public $guest_confirmed = false;
-    /** Company / group name and type (Tour Operator, etc.) */
+    /** @deprecated Removed from form; kept for Livewire snapshot compatibility. */
     public $guest_company_name = '';
+
+    /** @deprecated Removed from form; kept for Livewire snapshot compatibility. */
     public $guest_company_type = '';
 
     /** Guest search mode: false = new guest, true = existing client lookup. */
     public bool $use_existing_client = false;
+
+    /** True when the contact making the booking is also the staying guest. */
+    public bool $booking_for_self = true;
+
+    public string $booker_name = '';
+
+    public string $booker_phone = '';
 
     /** Summary stats for the selected existing guest. */
     public ?int $existing_guest_stay_count = null;
@@ -146,7 +159,7 @@ class AddReservation extends Component
         'European Plan',
     ];
 
-    public const FOREIGN_CURRENCIES = ['USD', 'EUR', 'GBP'];
+    public const FOREIGN_CURRENCIES = ForeignCurrencyPaymentSupport::OPTIONS;
 
     // Business source: how this guest came to us
     public const BUSINESS_SOURCE_OPTIONS = [
@@ -160,7 +173,14 @@ class AddReservation extends Component
 
     public const KNOWN_OTAS = ['Booking.com', 'Expedia', 'Agoda', 'TripAdvisor', 'Airbnb', 'Other OTA'];
 
-    public const COMPANY_TYPES = ['Tour Operator', 'Local Travel Agent', 'Corporate Company', 'Family'];
+    public const REFERRAL_TYPES = [
+        'Friend',
+        'Hotel staff',
+        'Past client',
+        'Tour operator',
+        'Local travel agency',
+        'Partnering company',
+    ];
 
     /** Full list of countries for searchable select (ISO 3166-1 names). */
     public static function getAllCountries(): array
@@ -534,6 +554,16 @@ class AddReservation extends Component
         $this->group_room_rows[] = ['room_type_id' => '', 'quantity' => 1, 'adults' => 2, 'children' => 0];
     }
 
+    public function updatedRoomAssignment(string $value): void
+    {
+        if ($value === 'later') {
+            $this->room_unit_id = '';
+            $this->show_overlap_modal = false;
+            $this->overlap_reservations = [];
+            $this->room_unit_booked_ranges = [];
+        }
+    }
+
     public function removeGroupRow(int $index): void
     {
         $rows = array_values($this->group_room_rows);
@@ -589,8 +619,20 @@ class AddReservation extends Component
     {
         $this->selected_ota = '';
         $this->social_media_page = '';
+        $this->referral_type = '';
         $this->referral_name = '';
         $this->referral_phone = '';
+    }
+
+    protected function buildReferralDetail(): ?string
+    {
+        $parts = array_filter([
+            $this->referral_type ?: null,
+            trim($this->referral_name) ?: null,
+            trim($this->referral_phone) ?: null,
+        ]);
+
+        return $parts !== [] ? implode(' · ', $parts) : null;
     }
 
     public function computeNights(): int
@@ -814,14 +856,20 @@ class AddReservation extends Component
     public function updatedAmountInForeign(): void
     {
         if ($this->exchange_rate !== '' && is_numeric($this->exchange_rate) && $this->amount_in_foreign !== '' && is_numeric($this->amount_in_foreign)) {
-            $this->amount_in_local = (string) round((float) $this->amount_in_foreign * (float) $this->exchange_rate, 2);
+            $this->amount_in_local = (string) ForeignCurrencyPaymentSupport::convertForeignToLocal(
+                (float) $this->amount_in_foreign,
+                (float) $this->exchange_rate
+            );
         }
     }
 
     public function updatedAmountInLocal(): void
     {
         if ($this->exchange_rate !== '' && is_numeric($this->exchange_rate) && $this->amount_in_local !== '' && is_numeric($this->amount_in_local)) {
-            $this->amount_in_foreign = (string) round((float) $this->amount_in_local / (float) $this->exchange_rate, 2);
+            $this->amount_in_foreign = (string) ForeignCurrencyPaymentSupport::convertLocalToForeign(
+                (float) $this->amount_in_local,
+                (float) $this->exchange_rate
+            );
         }
     }
 
@@ -867,15 +915,13 @@ class AddReservation extends Component
             'business_source' => 'Business source',
             'selected_ota' => 'OTA',
             'social_media_page' => 'Social media page',
-            'referral_name' => 'Referral name',
-            'referral_phone' => 'Referral phone',
+            'referral_type' => 'Referral type',
+            'referral_name' => 'Referrer name',
+            'referral_phone' => 'Referrer phone',
         ];
 
         if ($this->is_group_booking) {
             // Group uses same guest name from Guest information section
-        } else {
-            $rules['room_type_id'] = 'required';
-            $rules['rate_rs'] = 'required|numeric|min:0';
         }
         $rules['guest_name'] = 'required|string|min:2';
 
@@ -884,13 +930,28 @@ class AddReservation extends Component
         } elseif ($this->business_source === 'Social media') {
             $rules['social_media_page'] = 'required|string';
         } elseif ($this->business_source === 'Referral') {
-            $rules['referral_name'] = 'required|string';
-            $rules['referral_phone'] = 'required|string';
+            $rules['referral_type'] = ['required', Rule::in(self::REFERRAL_TYPES)];
         }
 
-        $this->validate($rules, [], $attributes);
+        if (! $this->is_group_booking) {
+            $rules['room_type_id'] = 'required';
+            $rules['rate_rs'] = 'required|numeric|min:0';
+            if ($this->room_assignment === 'now') {
+                $rules['room_unit_id'] = 'required';
+            }
+            if (! $this->booking_for_self) {
+                $rules['booker_name'] = 'required|string|min:2';
+                $rules['booker_phone'] = 'required|string|min:6';
+            }
+        }
+
+        $this->validate($rules, [], $attributes + [
+            'booker_name' => 'Booker name',
+            'booker_phone' => 'Booker phone',
+        ]);
 
         $hotel = Hotel::getHotel();
+        $today = Hotel::getTodayForHotel();
         try {
             OperationalShiftActionGate::assertFrontOfficeActionAllowed($hotel);
         } catch (\RuntimeException $e) {
@@ -898,6 +959,44 @@ class AddReservation extends Component
 
             return;
         }
+
+        $paidAmount = 0;
+
+        if ($this->payment_mode_enabled) {
+            $paidAmount = ForeignCurrencyPaymentSupport::resolvedPaidAmount(
+                $hotel,
+                (bool) $this->use_international_currency,
+                $this->foreign_currency,
+                $this->exchange_rate,
+                $this->amount_in_foreign,
+                $this->amount_in_local,
+                $this->payment_amount,
+            );
+        }
+
+        if ($this->payment_mode_enabled && $paidAmount > 0.00001) {
+            $payRules = [
+                'payment_unified' => ['required', Rule::in(PaymentCatalog::unifiedAccommodationValues())],
+            ];
+            if (PaymentCatalog::unifiedChoiceRequiresClientDetails($this->payment_unified)) {
+                $payRules['payment_client_reference'] = 'required|string|min:2|max:500';
+            }
+            if ($this->use_international_currency) {
+                $payRules['foreign_currency'] = ['required', Rule::in(ForeignCurrencyPaymentSupport::OPTIONS)];
+                $payRules['exchange_rate'] = 'required|numeric|min:0.0001';
+                $payRules['amount_in_foreign'] = 'required_without:amount_in_local|nullable|numeric|min:0.01';
+                $payRules['amount_in_local'] = 'required_without:amount_in_foreign|nullable|numeric|min:0.01';
+            }
+            $this->validate($payRules, [], [
+                'payment_unified' => 'Payment type',
+                'payment_client_reference' => 'Client / account details',
+                'foreign_currency' => 'Currency',
+                'exchange_rate' => 'Exchange rate',
+                'amount_in_foreign' => 'Foreign amount',
+                'amount_in_local' => 'Local amount',
+            ]);
+        }
+
         $reservationNumber = Reservation::generateUniqueNumber($hotel->id);
         $bookedUnitIds = $this->getBookedUnitIdsForPeriod($this->check_in_date, $this->check_out_date);
 
@@ -943,7 +1042,7 @@ class AddReservation extends Component
             }
         } else {
             $totalAmount = $this->getRoomChargesTotal();
-            if ($this->room_unit_id) {
+            if ($this->room_assignment === 'now' && $this->room_unit_id) {
                 // Prevent creating overlapping reservation on same room/unit.
                 $conflict = Reservation::where('hotel_id', $hotel->id)
                     ->whereNotIn('status', [Reservation::STATUS_CANCELLED, Reservation::STATUS_CHECKED_OUT])
@@ -958,26 +1057,6 @@ class AddReservation extends Component
                 }
                 $unitIds[] = (int) $this->room_unit_id;
             }
-        }
-
-        $paidAmount = 0;
-        if ($this->use_international_currency && $this->amount_in_local !== '' && is_numeric($this->amount_in_local)) {
-            $paidAmount = (float) $this->amount_in_local;
-        } elseif ($this->payment_amount !== '' && is_numeric($this->payment_amount)) {
-            $paidAmount = (float) $this->payment_amount;
-        }
-
-        if ($this->payment_mode_enabled && $paidAmount > 0.00001) {
-            $payRules = [
-                'payment_unified' => ['required', Rule::in(PaymentCatalog::unifiedAccommodationValues())],
-            ];
-            if (PaymentCatalog::unifiedChoiceRequiresClientDetails($this->payment_unified)) {
-                $payRules['payment_client_reference'] = 'required|string|min:2|max:500';
-            }
-            $this->validate($payRules, [], [
-                'payment_unified' => 'Payment type',
-                'payment_client_reference' => 'Client / account details',
-            ]);
         }
 
         $guestName = $this->guest_name;
@@ -995,19 +1074,30 @@ class AddReservation extends Component
                 $businessSourceDetail = $this->social_media_page ?: null;
                 break;
             case 'Referral':
-                $parts = trim($this->referral_name . ' ' . $this->referral_phone);
-                $businessSourceDetail = $parts !== '' ? $parts : null;
+                $businessSourceDetail = $this->buildReferralDetail();
                 break;
             default:
                 $businessSourceDetail = null;
+        }
+
+        $reservationContactPhone = null;
+        if (! $this->is_group_booking) {
+            if ($this->booking_for_self) {
+                $reservationContactPhone = $this->guest_mobile ?: null;
+            } else {
+                $reservationContactPhone = trim($this->booker_phone) ?: null;
+            }
         }
 
         $reservation = Reservation::create([
             'hotel_id' => $hotel->id,
             'reservation_number' => $reservationNumber,
             'guest_name' => $guestName,
+            'booker_name' => $this->is_group_booking || $this->booking_for_self
+                ? null
+                : trim($this->booker_name),
             'guest_email' => $this->is_group_booking ? null : ($this->guest_email ?: null),
-            'guest_phone' => $this->is_group_booking ? null : ($this->guest_mobile ?: null),
+            'guest_phone' => $reservationContactPhone,
             'guest_country' => $this->is_group_booking ? null : ($this->guest_country ?: null),
             'guest_address' => $this->is_group_booking ? null : ($this->guest_address ?: null),
             'guest_id_number' => $this->is_group_booking ? null : ($this->guest_id_number ?: null),
@@ -1019,6 +1109,9 @@ class AddReservation extends Component
             'check_out_time' => $this->parseTime($this->check_out_time),
             'room_type_id' => $firstRoomTypeId ?: null,
             'rate_plan' => $this->rate_type ?: null,
+            'meal_plan' => \App\Enums\MealPlan::BB->value,
+            'room_rate_amount' => $totalAmount,
+            'meal_plan_supplement' => 0,
             'adult_count' => max(1, $totalAdults),
             'child_count' => $totalChildren,
             'total_amount' => $totalAmount,
@@ -1028,7 +1121,7 @@ class AddReservation extends Component
             'booking_source' => $this->booking_source ?: null,
             'reservation_type' => $this->reservation_type ?: null,
             'business_source' => $this->is_group_booking ? 'Group' : ($this->business_source ?: null),
-            'business_source_detail' => $this->is_group_booking ? ($this->guest_company_name ?: $this->guest_name) : $businessSourceDetail,
+            'business_source_detail' => $this->is_group_booking ? ($this->guest_name ?: null) : $businessSourceDetail,
             'group_name' => $this->is_group_booking ? $this->guest_name : null,
             'expected_guest_count' => $this->is_group_booking ? ($totalAdults + $totalChildren) : null,
         ]);
@@ -1056,14 +1149,27 @@ class AddReservation extends Component
                 $payComment = PaymentCatalog::mergeClientReferenceIntoComment('', $this->payment_client_reference ?? '');
                 $receipt = 'RCPT-' . date('Ymd-His') . '-' . $reservation->id . '-' . random_int(100, 999);
                 $receipt = substr($receipt, 0, 50);
+                $paymentStorage = ForeignCurrencyPaymentSupport::resolveStorage(
+                    $hotel,
+                    (bool) $this->use_international_currency,
+                    $this->foreign_currency,
+                    $this->exchange_rate,
+                    $this->amount_in_foreign,
+                    $this->amount_in_local,
+                    $this->payment_amount,
+                );
                 ReservationPayment::create([
                     'hotel_id' => $hotel->id,
                     'reservation_id' => $reservation->id,
                     'amount' => $paidAmount,
-                    'currency' => $reservation->currency ?? ($hotel->currency ?? 'RWF'),
+                    'currency' => $paymentStorage['currency'],
+                    'foreign_currency' => $paymentStorage['foreign_currency'],
+                    'foreign_amount' => $paymentStorage['foreign_amount'],
+                    'exchange_rate' => $paymentStorage['exchange_rate'],
                     'payment_type' => $method,
                     'payment_method' => $method,
                     'payment_status' => $pStatus,
+                    'payment_purpose' => \App\Enums\PaymentPurpose::CurrentStay->value,
                     'received_by' => $user->id,
                     'received_at' => Carbon::now(),
                     'receipt_number' => $receipt,
@@ -1077,9 +1183,23 @@ class AddReservation extends Component
             }
         }
 
-        $this->reservation_number = $reservationNumber;
-        $this->reserve_success = true;
-        session()->flash('message', 'Reservation created. Reservation number: ' . $this->reservation_number);
+        $reservation->refresh();
+        $tab = $reservation->check_in_date->format('Y-m-d') === $today ? 'arrivals' : 'all';
+        $params = [
+            'search' => $reservationNumber,
+            'tab' => $tab,
+        ];
+
+        $flash = 'Reservation '.$reservationNumber.' saved.';
+        if (! $this->is_group_booking && $this->room_assignment === 'later') {
+            $flash .= ' Assign a room when checking in or editing the reservation.';
+        } elseif ($reservation->roomUnits()->exists()) {
+            $flash .= ' Room assigned.';
+        }
+
+        session()->flash('message', $flash);
+
+        $this->redirect(route('front-office.reservations', $params), navigate: true);
     }
 
     protected function parseTime(?string $time): ?string

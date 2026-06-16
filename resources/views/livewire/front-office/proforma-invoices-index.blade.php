@@ -1,7 +1,6 @@
 <div class="container-fluid py-4">
     <div class="mb-3">
         <h5 class="mb-2 fw-bold">Proforma invoices</h5>
-        @include('livewire.front-office.partials.front-office-quick-nav')
         <div class="d-flex flex-wrap gap-2 mt-2">
             <a href="{{ route('front-office.proforma-line-defaults') }}" class="btn btn-outline-secondary btn-sm">Default prices</a>
             <a href="{{ route('front-office.proforma-invoices.create') }}" class="btn btn-primary btn-sm">

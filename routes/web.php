@@ -171,7 +171,14 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/front-office/dashboard', \App\Livewire\FrontOffice\FrontOfficeDashboard::class)->name('front-office.dashboard');
     Route::get('/front-office/add-reservation', \App\Livewire\FrontOffice\AddReservation::class)->name('front-office.add-reservation');
     Route::get('/front-office/reservations', \App\Livewire\FrontOffice\ReservationsList::class)->name('front-office.reservations');
-    Route::get('/front-office/reservation-details/{reservation}', \App\Livewire\FrontOffice\ReservationDetails::class)->name('front-office.reservation-details');
+    Route::get('/front-office/reservation-details/{reservation}', \App\Livewire\FrontOffice\ReservationDetails::class)
+        ->name('front-office.reservation-details')
+        ->where('reservation', '[0-9A-Za-z\-]+');
+    Route::get('/front-office/reservation-details/{reservation}/folio-print', \App\Http\Controllers\FrontOffice\ReservationFolioPrintController::class)
+        ->name('front-office.reservation-folio-print')
+        ->where('reservation', '[0-9A-Za-z\-]+');
+    Route::get('/front-office/checkout-settlement-print/{reservation}', \App\Http\Controllers\FrontOffice\CheckoutSettlementPrintController::class)
+        ->name('front-office.checkout-settlement-print');
     Route::get('/room-types', \App\Livewire\FrontOffice\RoomTypesManagement::class)->name('room-types.index');
     Route::get('/rooms', function () {
         return redirect()->route('room-types.index');
@@ -180,11 +187,14 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/amenities', \App\Livewire\FrontOffice\AmenitiesManagement::class)->name('amenities.index');
     Route::get('/front-office/rooms', \App\Livewire\FrontOffice\FrontOfficeRooms::class)->name('front-office.rooms');
     Route::get('/front-office/reports', \App\Livewire\FrontOffice\FrontOfficeReports::class)->name('front-office.reports');
+    Route::get('/front-office/reports/complementary', \App\Livewire\FrontOffice\ComplementaryServicesReport::class)->name('front-office.reports.complementary');
+    Route::get('/front-office/reports/complementary/print', \App\Http\Controllers\FrontOffice\ComplementaryServicesPrintController::class)->name('front-office.reports.complementary.print');
     Route::get('/front-office/guests-report', \App\Livewire\FrontOffice\GuestsReport::class)->name('front-office.guests-report');
     Route::get('/front-office/guests-report/export', \App\Http\Controllers\FrontOffice\GuestsReportExportController::class)->name('front-office.guests-report.export');
     Route::get('/front-office/guests-report/print', \App\Http\Controllers\FrontOffice\GuestsReportPrintController::class)->name('front-office.guests-report.print');
     Route::get('/front-office/daily-accommodation-report', \App\Livewire\FrontOffice\DailyAccommodationReport::class)->name('front-office.daily-accommodation-report');
     Route::get('/front-office/daily-accommodation-report/print', \App\Http\Controllers\FrontOffice\DailyAccommodationReportPrintController::class)->name('front-office.daily-accommodation-report.print');
+    Route::get('/front-office/operational-day-audit', \App\Livewire\FrontOffice\OperationalDayAudit::class)->name('front-office.operational-day-audit');
 
     // General monthly report (restaurant + rooms summary)
     Route::get('/front-office/general-report-settings', \App\Livewire\FrontOffice\HotelRevenueReportSettings::class)->name('front-office.general-report-settings');
@@ -206,6 +216,8 @@ Route::middleware(['auth', 'hotel'])->group(function () {
     Route::get('/front-office/proforma-invoices/{proformaInvoice}/print', [\App\Http\Controllers\FrontOffice\ProformaInvoicePrintController::class, 'show'])->name('front-office.proforma-invoices.print');
     Route::get('/front-office/proforma-line-defaults', \App\Livewire\FrontOffice\ProformaLineDefaults::class)->name('front-office.proforma-line-defaults');
     Route::get('/front-office/wellness', \App\Livewire\FrontOffice\WellnessManagement::class)->name('front-office.wellness');
+    Route::get('/front-office/restaurant', \App\Livewire\FrontOffice\RestaurantMealBoard::class)->name('front-office.restaurant');
+    Route::get('/front-office/restaurant/print', \App\Http\Controllers\FrontOffice\RestaurantMealPrintController::class)->name('front-office.restaurant.print');
 
     // Subscription invoice (Super Admin only; same access as Hotel Subscription page)
     Route::get('/subscription-invoice/{invoice}', function (App\Models\SubscriptionInvoice $invoice) {

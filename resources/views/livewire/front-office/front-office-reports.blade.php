@@ -58,11 +58,15 @@
                 <div class="mb-3 fo-report-no-print">
                     <div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
                         <h5 class="mb-0">Front Office sales reports</h5>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
-                            <i class="fa fa-print me-1"></i>Print report
-                        </button>
+                        <div class="d-flex gap-2">
+                            <a href="{{ route('front-office.reports.complementary') }}" class="btn btn-outline-warning btn-sm">
+                                <i class="fa fa-gift me-1"></i>Complimentary services
+                            </a>
+                            <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
+                                <i class="fa fa-print me-1"></i>Print report
+                            </button>
+                        </div>
                     </div>
-                    @include('livewire.front-office.partials.front-office-quick-nav')
                 </div>
 
                 <div class="card mb-3 fo-report-no-print">
@@ -321,7 +325,7 @@
                                                         <td>{{ $row['guest'] }}</td>
                                                         <td class="small">{{ $row['reservation'] }}</td>
                                                         <td class="small">{{ $row['payment_method'] }}</td>
-                                                        <td class="text-end">{{ $row['currency'] }} {{ number_format((float) $row['amount'], 2, '.', '') }}</td>
+                                                        <td class="text-end">{{ $row['amount_display'] ?? ($row['currency'].' '.number_format((float) $row['amount'], 2, '.', '')) }}</td>
                                                         <td class="small">{{ $row['sales_date'] }}</td>
                                                         <td class="small text-muted">{{ $row['received_at'] }}</td>
                                                         <td class="small">{{ $row['confirmed_by'] }}</td>

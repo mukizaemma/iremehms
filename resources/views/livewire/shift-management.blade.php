@@ -1,7 +1,6 @@
 <div class="bg-light rounded p-4">
     <div class="mb-4">
         <h5 class="mb-2">Shift Management</h5>
-        @include('livewire.front-office.partials.front-office-quick-nav')
     </div>
 
     @if (session()->has('message'))
@@ -262,7 +261,13 @@
                     @endphp
                     <p class="mb-2"><strong>Business day:</strong> {{ \Carbon\Carbon::parse($openBusinessDay->business_date)->format('d M Y') }} · Opened at {{ \App\Helpers\HotelTimeHelper::format($openBusinessDay->opened_at, 'H:i') }} · Day runs until <strong>{{ $rolloverDisplay }}</strong> next morning</p>
                     @if(Auth::user()->isSuperAdmin() || Auth::user()->canNavigateModules())
-                        <button type="button" class="btn btn-warning" wire:click="closeBusinessDay" wire:confirm="Close the business day? No reopening allowed.">Close Business Day</button>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <a href="{{ route('front-office.operational-day-audit') }}" class="btn btn-outline-primary btn-sm">
+                                <i class="fa fa-clipboard-check me-1"></i>Run day-end audit first
+                            </a>
+                            <button type="button" class="btn btn-warning btn-sm" wire:click="closeBusinessDay" wire:confirm="Close the business day? No reopening allowed.">Close Business Day</button>
+                        </div>
+                        <p class="small text-muted mb-0 mt-2">Use the day-end audit checklist to clear blockers (folios, POS, cash, shifts) before closing.</p>
                     @endif
                 @else
                     <p class="text-muted mb-2">No business day is open.</p>

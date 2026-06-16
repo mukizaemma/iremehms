@@ -64,6 +64,7 @@ final class FrontOfficeHubPermissions
 
         $proforma = $fo && $u->hasPermission('fo_proforma_manage');
         $wellness = $fo && $u->hasPermission('fo_wellness_manage');
+        $restaurant = $fo && $u->hasPermission('fo_restaurant_meals');
 
         // Operational shifts (FO / global) — same access as Shift management page for FO context
         $shiftManagement = $fo && (
@@ -74,6 +75,15 @@ final class FrontOfficeHubPermissions
             || $u->hasPermission('shift_open_global')
             || $u->hasPermission('shift_close_global')
             || ($u->hasPermission('fo_check_in_out') && OperationalShiftService::isEnabled())
+        );
+
+        $operationalAudit = $fo && (
+            $u->isSuperAdmin()
+            || $u->canNavigateModules()
+            || $u->hasPermission('fo_operational_audit')
+            || $u->hasPermission('fo_collect_payment')
+            || $u->hasPermission('fo_check_in_out')
+            || $u->isReceptionist()
         );
 
         return [
@@ -89,7 +99,9 @@ final class FrontOfficeHubPermissions
             'communication' => $communication,
             'proforma' => $proforma,
             'wellness' => $wellness,
+            'restaurant' => $restaurant,
             'shift_management' => $shiftManagement,
+            'operational_audit' => $operationalAudit,
         ];
     }
 }

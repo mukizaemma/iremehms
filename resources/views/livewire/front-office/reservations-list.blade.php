@@ -1,45 +1,20 @@
 <div class="reservations-list">
-    <div class="mb-4">
-        <h5 class="mb-2">All reservations</h5>
-        @include('livewire.front-office.partials.front-office-quick-nav')
-        <div class="mt-2">
-            <a href="{{ route('front-office.add-reservation') }}" class="btn btn-primary btn-sm"><i class="fa fa-plus me-1"></i>New reservation</a>
+    @if(session()->has('message'))
+        <div class="alert alert-success alert-dismissible fade show mb-3" role="alert">
+            {{ session('message') }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
+    @endif
+    @if(session()->has('error'))
+        <div class="alert alert-danger alert-dismissible fade show mb-3" role="alert">
+            {{ session('error') }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    @endif
+    <div class="mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <h5 class="mb-0">{{ $tabLabel }}</h5>
+        <a href="{{ route('front-office.add-reservation') }}" class="btn btn-primary btn-sm"><i class="fa fa-plus me-1"></i>New reservation</a>
     </div>
-
-    {{-- Tabs: Reservations (All), Arrivals, Departures, In-house, No show --}}
-    <ul class="nav nav-tabs nav-tabs-custom mb-3">
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'all' ? 'active' : '' }}" wire:click="setTab('all')">
-                Reservations <span class="badge bg-secondary ms-1">{{ $counts['all'] }}</span>
-            </button>
-        </li>
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'arrivals' ? 'active' : '' }}" wire:click="setTab('arrivals')">
-                Arrivals <span class="badge bg-secondary ms-1">{{ $counts['arrivals'] }}</span>
-            </button>
-        </li>
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'departures' ? 'active' : '' }}" wire:click="setTab('departures')">
-                Departures <span class="badge bg-secondary ms-1">{{ $counts['departures'] }}</span>
-            </button>
-        </li>
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'in_house' ? 'active' : '' }}" wire:click="setTab('in_house')">
-                In-house <span class="badge bg-secondary ms-1">{{ $counts['in_house'] }}</span>
-            </button>
-        </li>
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'no_show' ? 'active' : '' }}" wire:click="setTab('no_show')">
-                No show <span class="badge bg-secondary ms-1">{{ $counts['no_show'] }}</span>
-            </button>
-        </li>
-        <li class="nav-item">
-            <button type="button" class="nav-link {{ $tab === 'cancelled' ? 'active' : '' }}" wire:click="setTab('cancelled')">
-                Cancelled <span class="badge bg-secondary ms-1">{{ $counts['cancelled'] }}</span>
-            </button>
-        </li>
-    </ul>
 
     {{-- Toolbar: view toggle, Print GR, Make Group, Export, Search --}}
     <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -59,7 +34,7 @@
         <div class="ms-auto" style="min-width: 220px;">
             <div class="input-group input-group-sm">
                 <span class="input-group-text"><i class="fa fa-search"></i></span>
-                <input type="text" class="form-control" placeholder="Search name, phone, email, room…" wire:model.live.debounce.300ms="search">
+                <input type="text" class="form-control" placeholder="Search name, phone, email, reservation #…" wire:model.live.debounce.300ms="search" autocomplete="off">
             </div>
         </div>
     </div>
@@ -67,8 +42,10 @@
     @if($reservations->isEmpty())
         <div class="alert alert-info mb-0">
             <i class="fa fa-info-circle me-2"></i>No reservations match the current filter.
-            @if($search)
-                <button type="button" class="btn btn-link btn-sm p-0 ms-2" wire:click="$set('search', '')">Clear search</button>
+            @if($search !== '')
+                <button type="button" class="btn btn-link btn-sm p-0 ms-2" wire:click="clearSearch">Clear search</button>
+            @elseif($tab !== 'all')
+                <a href="{{ route('front-office.reservations', ['tab' => 'all']) }}" class="btn btn-link btn-sm p-0 ms-2">Show all active</a>
             @endif
         </div>
     @else
@@ -88,14 +65,14 @@
                                         <div class="min-w-0">
                                             <div class="d-flex align-items-center gap-2">
                                                 <div class="fw-semibold text-truncate" title="{{ $row['guest_name'] }}">
-                                                    <a href="{{ route('front-office.reservation-details', ['reservation' => $row['reservation']->id ?? $row['reservation_number']]) }}" class="text-decoration-none text-dark">
+                                                    <a href="{{ route('front-office.reservation-details', $row['reservation_id']) }}" class="text-decoration-none text-dark">
                                                         {{ $row['guest_name'] }}
                                                     </a>
                                                 </div>
                                                 <span class="badge bg-{{ $statusColor }} small">{{ $row['status_label'] ?? ucfirst(str_replace('_',' ',$row['status'])) }}</span>
                                             </div>
                                             <div class="small text-muted">
-                                                {{ $row['reservation_number'] }}
+                                                <a href="{{ route('front-office.reservation-details', $row['reservation_id']) }}" class="text-decoration-none text-muted">{{ $row['reservation_number'] }}</a>
                                                 @if($row['room_label'] !== '—') · Room {{ $row['room_label'] }} @else · Unassigned @endif
                                             </div>
                                         </div>
@@ -103,7 +80,8 @@
                                     <div class="dropdown">
                                         <button class="btn btn-link btn-sm text-dark p-0" data-bs-toggle="dropdown"><i class="fa fa-ellipsis-v"></i></button>
                                         <ul class="dropdown-menu dropdown-menu-end">
-                                            <li><a class="dropdown-item" href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}">Open in Front office</a></li>
+                                            <li><a class="dropdown-item" href="{{ route('front-office.reservation-details', $row['reservation_id']) }}">View details</a></li>
+                                            <li><a class="dropdown-item" href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}">Open in booking calendar</a></li>
                                         </ul>
                                     </div>
                                 </div>
@@ -112,10 +90,12 @@
                                     <div>Check-out: {{ $row['check_out'] }}</div>
                                     <div class="mt-1">
                                         <span class="badge bg-light text-dark">{{ $row['nights'] }} Night(s)</span>
-                                        @if($row['is_arrival_today'])
+                                        @if($row['is_arrival_today'] ?? false)
                                             <span class="badge bg-info ms-1">Arriving today</span>
                                         @endif
-                                        @if($row['can_checkout'])
+                                        @if($row['is_overstay'] ?? false)
+                                            <span class="badge bg-danger ms-1">Overstay</span>
+                                        @elseif($row['is_due_today'] ?? false)
                                             <span class="badge bg-warning text-dark ms-1">Departure today</span>
                                         @endif
                                     </div>
@@ -138,11 +118,14 @@
                                     <div class="d-flex justify-content-between"><span>Paid:</span> <span>{{ $row['currency'] }} {{ number_format($row['paid'], 2) }}</span></div>
                                     <div class="d-flex justify-content-between fw-semibold"><span>Balance:</span> <span>{{ $row['currency'] }} {{ number_format($row['balance'], 2) }}</span></div>
                                     <div class="mt-2 d-flex flex-wrap gap-1">
-                                        @if($row['status'] === \App\Models\Reservation::STATUS_CONFIRMED && $row['is_arrival_today'])
-                                            <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}" class="btn btn-sm btn-outline-primary">Check-in</a>
+                                        @if($row['can_check_in'] ?? false)
+                                            <button type="button" class="btn btn-sm btn-outline-primary" wire:click="openCheckInModal({{ $row['reservation_id'] }})">Check-in</button>
                                         @endif
-                                        @if($row['can_checkout'])
-                                            <a href="{{ route('front-office.reservations') }}?search={{ urlencode($row['reservation_number']) }}" class="btn btn-sm btn-outline-success">Checkout</a>
+                                        @if($row['can_checkout'] ?? false)
+                                            <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}&action=checkout" class="btn btn-sm btn-success">Check out</a>
+                                        @endif
+                                        @if($row['can_extend_stay'] ?? false)
+                                            <button type="button" class="btn btn-sm btn-outline-info" wire:click="openExtendModal({{ $row['reservation_id'] }})">Extend stay</button>
                                         @endif
                                         @if($row['can_add_payment'])
                                             <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}&action=payment" class="btn btn-sm btn-outline-secondary">Add payment</a>
@@ -183,12 +166,12 @@
                                     <td>
                                         <div class="d-flex flex-column">
                                             <div class="fw-medium">
-                                                <a href="{{ route('front-office.reservation-details', ['reservation' => $row['reservation']->id ?? $row['reservation_number']]) }}" class="text-decoration-none text-dark">
+                                                <a href="{{ route('front-office.reservation-details', $row['reservation_id']) }}" class="text-decoration-none text-dark">
                                                     {{ $row['guest_name'] }}
                                                 </a>
                                             </div>
                                             <div class="small text-muted">
-                                                {{ $row['reservation_number'] }}
+                                                <a href="{{ route('front-office.reservation-details', $row['reservation_id']) }}" class="text-decoration-none text-muted">{{ $row['reservation_number'] }}</a>
                                                 @if($row['room_label'] !== '—') · Room {{ $row['room_label'] }} @else · Unassigned @endif
                                             </div>
                                             <div class="mt-1">
@@ -207,11 +190,14 @@
                                     <td class="text-end small fw-medium">{{ $row['currency'] }} {{ number_format($row['balance'], 2) }}</td>
                                     <td class="small">
                                         <div class="d-flex flex-wrap gap-1">
-                                            @if($row['status'] === \App\Models\Reservation::STATUS_CONFIRMED && $row['is_arrival_today'])
-                                                <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}" class="btn btn-sm btn-outline-primary">Check-in</a>
+                                            @if($row['can_check_in'] ?? false)
+                                                <button type="button" class="btn btn-sm btn-outline-primary" wire:click="openCheckInModal({{ $row['reservation_id'] }})">Check-in</button>
                                             @endif
-                                            @if($row['can_checkout'])
-                                                <a href="{{ route('front-office.reservations') }}?search={{ urlencode($row['reservation_number']) }}" class="btn btn-sm btn-outline-success">Checkout</a>
+                                            @if($row['can_checkout'] ?? false)
+                                                <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}&action=checkout" class="btn btn-sm btn-success">Check out</a>
+                                            @endif
+                                            @if($row['can_extend_stay'] ?? false)
+                                                <button type="button" class="btn btn-sm btn-outline-info" wire:click="openExtendModal({{ $row['reservation_id'] }})">Extend stay</button>
                                             @endif
                                             @if($row['can_add_payment'])
                                                 <a href="{{ route('module.show', 'front-office') }}?reservation={{ urlencode($row['reservation_number']) }}&action=payment" class="btn btn-sm btn-outline-secondary">Add payment</a>
@@ -229,6 +215,9 @@
             </div>
         @endif
     @endif
+
+    @include('livewire.front-office.partials.check-in-modal')
+    @include('livewire.front-office.partials.extend-stay-modal')
 
     <style>
 .nav-tabs-custom .nav-link { border: 1px solid transparent; border-radius: 0.25rem; margin-right: 0.25rem; }

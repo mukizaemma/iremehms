@@ -33,7 +33,6 @@
                             <a href="{{ route('front-office.guests-report.print', $sigQuery) }}" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm"><i class="fa fa-print me-1"></i>Print (A4)</a>
                         </div>
                     </div>
-                    @include('livewire.front-office.partials.front-office-quick-nav')
                 </div>
 
                 <div class="card mb-3 no-print">

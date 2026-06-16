@@ -13,7 +13,7 @@ class Dashboard extends Component
         $routes = [
             'dashboard' => 'dashboard',
             'restaurant' => 'pos.home',
-            'front-office' => 'front-office.dashboard',
+            'front-office' => 'dashboard',
             'store' => 'stock.dashboard',
             'recovery' => 'recovery.dashboard',
             'settings' => 'system.configuration',
@@ -99,9 +99,25 @@ class Dashboard extends Component
         $hasRestaurant = $modules->contains('slug', 'restaurant');
         $hasFrontOffice = $modules->contains('slug', 'front-office');
         $hasStore = $modules->contains('slug', 'store');
+        $isManagerLike = $user && in_array($effectiveSlug, ['manager', 'director', 'general-manager', 'hotel-admin'], true);
+        $isAccountant = $effectiveSlug === 'accountant';
+        $showBackend = $user && $user->canNavigateModules();
+
+        // Front office staff: room summary board on Dashboard (same as Summary shortcut).
+        if ($user && \App\Support\FrontOfficeTopNavigation::usesFrontOfficeDashboardHome(
+            $user,
+            $hasFrontOffice,
+            $isAccountant,
+            $isManagerLike,
+            $effectiveSlug,
+        )) {
+            return view('livewire.dashboards.receptionist', [
+                'user' => $user,
+            ])->layout('livewire.layouts.app-layout');
+        }
 
         // Manager-like dashboard: department cards with daily/monthly/date-range report shortcuts.
-        if ($user && in_array($effectiveSlug, ['manager', 'director', 'general-manager', 'hotel-admin'], true)) {
+        if ($user && $isManagerLike) {
             return view('livewire.dashboards.manager', [
                 'user' => $user,
                 'modules' => $modules,

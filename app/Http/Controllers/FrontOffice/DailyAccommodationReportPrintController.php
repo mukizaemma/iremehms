@@ -7,6 +7,7 @@ use App\Models\Hotel;
 use App\Models\Reservation;
 use App\Models\ReservationPayment;
 use App\Models\User;
+use App\Support\ForeignCurrencyPaymentSupport;
 use App\Support\PaymentCatalog;
 use App\Traits\ChecksModuleStatus;
 use Carbon\Carbon;
@@ -157,17 +158,13 @@ class DailyAccommodationReportPrintController
                 $todayPayments = $paymentsByReservation[(int) $r->id] ?? [];
                 $paidToday = 0.0;
                 $creditToday = 0.0;
-                $modeAmounts = [];
+                $paymentDetailParts = [];
 
                 foreach ($todayPayments as $p) {
                     $amount = (float) ($p->amount ?? 0);
                     $modeLabel = $paymentModeLabel($p);
                     $st = PaymentCatalog::normalizeStatus($p->payment_status ?? PaymentCatalog::STATUS_PAID);
-
-                    if (! isset($modeAmounts[$modeLabel])) {
-                        $modeAmounts[$modeLabel] = 0.0;
-                    }
-                    $modeAmounts[$modeLabel] += $amount;
+                    $paymentDetailParts[] = $modeLabel.' '.ForeignCurrencyPaymentSupport::formatReportLine($p, $amount);
 
                     if ($st === PaymentCatalog::STATUS_DEBITS || $st === PaymentCatalog::STATUS_OFFER) {
                         $creditToday += $amount;
@@ -179,14 +176,7 @@ class DailyAccommodationReportPrintController
                 $balanceDue = max(0.0, (float) ($r->total_amount ?? 0) - (float) ($r->paid_amount ?? 0));
                 $balanceOncePerReservation[(int) $r->id] = $balanceDue;
 
-                $modeString = '';
-                if (! empty($modeAmounts)) {
-                    $parts = [];
-                    foreach ($modeAmounts as $mode => $amt) {
-                        $parts[] = $mode . ' ' . number_format((float) $amt, 2, '.', '');
-                    }
-                    $modeString = implode(', ', $parts);
-                }
+                $modeString = $paymentDetailParts !== [] ? implode(', ', $paymentDetailParts) : '';
 
                 $rows[] = [
                     'date' => $dateStr,

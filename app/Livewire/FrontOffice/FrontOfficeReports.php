@@ -7,6 +7,7 @@ use App\Models\Reservation;
 use App\Models\ReservationPayment;
 use App\Models\RoomType;
 use App\Models\RoomUnit;
+use App\Support\ForeignCurrencyPaymentSupport;
 use App\Support\PaymentCatalog;
 use App\Traits\ChecksModuleStatus;
 use Carbon\Carbon;
@@ -365,6 +366,7 @@ class FrontOfficeReports extends Component
                 'guest' => $r->guest_name ?? '—',
                 'reservation' => $r->reservation_number ?? '—',
                 'amount' => (float) ($p->amount ?? 0),
+                'amount_display' => ForeignCurrencyPaymentSupport::formatDisplay($p),
                 'currency' => $currency,
                 'payment_method' => PaymentCatalog::formatPaymentLineForReport($p->payment_method ?? '', $p->payment_status ?? ''),
                 'received_at' => $p->received_at ? $p->received_at->format('Y-m-d H:i') : '',

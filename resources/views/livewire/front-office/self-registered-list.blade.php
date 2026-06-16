@@ -14,7 +14,6 @@
                             <button type="button" class="btn btn-primary btn-sm" onclick="navigator.clipboard.writeText('{{ $welcomeUrl }}'); alert('URL copied to clipboard.');"><i class="fa fa-link me-1"></i>Copy registration URL</button>
                         </div>
                     </div>
-                    @include('livewire.front-office.partials.front-office-quick-nav')
                 </div>
 
                 <div class="card mb-3">

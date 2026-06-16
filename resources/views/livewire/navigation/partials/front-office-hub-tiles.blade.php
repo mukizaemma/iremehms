@@ -72,6 +72,18 @@
         </div>
     @endif
 
+    @if($tiles['restaurant'] ?? false)
+        <div class="col-6 col-md-4 col-lg-3">
+            @include('livewire.navigation.partials.hub-tile', ['href' => route('front-office.restaurant'), 'icon' => 'fa-utensils', 'label' => 'Restaurant'])
+        </div>
+    @endif
+
+    @if($tiles['operational_audit'] ?? false)
+        <div class="col-6 col-md-4 col-lg-3">
+            @include('livewire.navigation.partials.hub-tile', ['href' => route('front-office.operational-day-audit'), 'icon' => 'fa-clipboard-check', 'label' => 'Day-end audit'])
+        </div>
+    @endif
+
     @if($tiles['shift_management'] ?? false)
         <div class="col-6 col-md-4 col-lg-3">
             @include('livewire.navigation.partials.hub-tile', ['href' => route('shift.management'), 'icon' => 'fa-clock', 'label' => 'Shift management'])

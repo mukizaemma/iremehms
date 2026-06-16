@@ -316,7 +316,7 @@
                                                             </div>
                                                         </div>
                                                         <div class="text-end">
-                                                            <div class="fw-medium">{{ $p['currency'] ?? ($paymentCheckoutSummary['folio']['currency'] ?? 'RWF') }} {{ number_format((float)($p['amount'] ?? 0), 2, '.', '') }}</div>
+                                                            <div class="fw-medium">{{ $p['amount_display'] ?? (($p['currency'] ?? 'RWF') . ' ' . number_format((float)($p['amount'] ?? 0), 2, '.', '')) }}</div>
                                                             <div class="mt-2">
                                                                 <a href="{{ route('front-office.reservation-payment-receipt', ['payment' => $p['id']]) }}"
                                                                    target="_blank"
@@ -346,6 +346,13 @@
                                     </select>
                                     @error('payment_unified') <span class="text-danger small">{{ $message }}</span> @enderror
                                 </div>
+                                @if(! $use_international_currency)
+                                    <div class="col-md-6">
+                                        <label class="form-label">Amount ({{ \App\Support\ForeignCurrencyPaymentSupport::hotelBaseCurrency() }})</label>
+                                        <input type="number" class="form-control" wire:model="payment_amount" step="0.01" min="0" placeholder="0.00">
+                                        @error('payment_amount') <span class="text-danger small">{{ $message }}</span> @enderror
+                                    </div>
+                                @endif
                                 @if($payment_unified === \App\Support\PaymentCatalog::METHOD_CASH)
                                     <div class="col-md-6 d-flex align-items-end">
                                         <div class="form-check mb-2">
@@ -362,32 +369,17 @@
                                     </div>
                                 @endif
                                 <div class="col-12">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="folio_debt_settle" wire:model.live="payment_is_debt_settlement">
-                                        <label class="form-check-label" for="folio_debt_settle">Confirming outstanding balance (debt) payment</label>
-                                    </div>
-                                </div>
-                                @if($payment_is_debt_settlement)
-                                    <div class="col-md-6">
-                                        <label class="form-label">Sales / revenue date for reports <span class="text-danger">*</span></label>
-                                        <input type="date" class="form-control" wire:model="payment_revenue_attribution_date">
-                                        @error('payment_revenue_attribution_date') <span class="text-danger small">{{ $message }}</span> @enderror
-                                        <div class="form-text small">Counted in rooms sales on this date.</div>
-                                    </div>
-                                @endif
-                                <div class="col-md-6">
-                                    <label class="form-label">Currency</label>
-                                    <select class="form-select" wire:model="payment_currency">
-                                        <option value="INR">INR (Rs)</option>
-                                        <option value="USD">USD ($)</option>
-                                        <option value="RWF">RWF</option>
-                                        <option value="EUR">EUR (€)</option>
-                                    </select>
+                                    @include('livewire.front-office.partials.payment-purpose-fields', [
+                                        'purposeModel' => 'paymentPurpose',
+                                        'revenueDateModel' => 'payment_revenue_attribution_date',
+                                    ])
                                 </div>
                                 <div class="col-12">
-                                    <label class="form-label">Amount</label>
-                                    <input type="number" class="form-control" wire:model="payment_amount" step="0.01" min="0" placeholder="0.00">
-                                    @error('payment_amount') <span class="text-danger small">{{ $message }}</span> @enderror
+                                    @include('livewire.front-office.partials.foreign-currency-payment-fields', [
+                                        'baseCurrency' => \App\Support\ForeignCurrencyPaymentSupport::hotelBaseCurrency(),
+                                        'idPrefix' => 'folio',
+                                        'inlineAmount' => true,
+                                    ])
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label">Comment</label>
@@ -584,63 +576,13 @@
                         <button type="button" class="btn btn-sm {{ (int) $room_view_days === 30 ? 'btn-primary' : 'btn-outline-secondary' }}" wire:click="setViewDays(30)">30 days</button>
                     </div>
                 </div>
-                <a href="{{ route('front-office.add-reservation') }}" class="btn btn-sm btn-primary"><i class="fa fa-bed"></i> <i class="fa fa-plus small"></i> Add Reservation</a>
-            </div>
-        </div>
-    </div>
-
-    {{-- Status filter: click to filter; table/cards update to show only matching rooms --}}
-    @php
-        $statusLabels = [
-            'all' => 'All',
-            'vacant' => 'Vacant',
-            'occupied' => 'In-house',
-            'reserved' => 'Reserved / Future',
-            'due_out' => "Today's departure",
-            'due_in' => "Today's arrival",
-            'recent_bookings' => 'Recent bookings',
-            'blocked' => 'Blocked',
-            'dirty' => 'Dirty',
-            'no_show' => 'No Show',
-        ];
-        $filteredCount = $this->getFilteredRoomsCount();
-    @endphp
-    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-        <span class="small text-muted me-1">Status:</span>
-        @foreach(['all' => ['All', 'secondary'], 'vacant' => ['Vacant', 'success'], 'occupied' => ['In-house', 'primary'], 'due_in' => ["Today's arrival", 'info'], 'due_out' => ["Today's departure", 'warning'], 'reserved' => ['Reserved / Future', 'info'], 'recent_bookings' => ['Recent bookings', 'secondary'], 'blocked' => ['Blocked', 'dark'], 'dirty' => ['Dirty', 'secondary'], 'no_show' => ['No Show', 'danger']] as $key => $labelColor)
-            @php
-                $label = $labelColor[0];
-                $color = $labelColor[1];
-                $count = $counts[$key] ?? 0;
-                $active = $statusFilter === $key;
-            @endphp
-            <button type="button"
-                    class="btn btn-sm {{ $active ? 'btn-' . $color : 'btn-outline-' . $color }} rounded-pill px-3 py-1 d-inline-flex align-items-center"
-                    wire:click="setStatusFilter('{{ $key }}')"
-                    @if($key === 'reserved') title="Room has a booking in the visible date range (booked)" @endif>
-                {{ $label }} <span class="badge {{ $active ? 'bg-light text-body' : 'bg-' . $color }} ms-1">{{ $count }}</span>
-            </button>
-        @endforeach
-    </div>
-    <p class="small text-muted mb-2">
-        <strong>Reserved / Future</strong> = room has at least one confirmed or in-house booking in this period (not cancelled/checked-out).
-        <strong>In-house</strong> = guest actually checked in today (status checked-in and within stay dates).
-        <strong>Today's arrival</strong> = confirmed bookings arriving today (not yet checked in).
-        <strong>Today's departure</strong> = in-house stays checking out today.
-    </p>
-    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <span class="small text-muted">
-            @if($statusFilter === 'all')
-                Showing all {{ $filteredCount }} rooms
-            @else
-                Showing {{ $filteredCount }} room(s) — {{ $statusLabels[$statusFilter] ?? $statusFilter }}
-            @endif
-        </span>
-        <div class="d-flex align-items-center gap-2">
-            <span class="small text-muted">View:</span>
-            <div class="btn-group btn-group-sm">
-                <button type="button" class="btn {{ $viewMode === 'grid' ? 'btn-primary' : 'btn-outline-secondary' }}" wire:click="setViewMode('grid')"><i class="fa fa-th-list me-1"></i>Grid</button>
-                <button type="button" class="btn {{ $viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary' }}" wire:click="setViewMode('cards')"><i class="fa fa-th-large me-1"></i>Cards</button>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn {{ $viewMode === 'grid' ? 'btn-primary' : 'btn-outline-secondary' }}" wire:click="setViewMode('grid')"><i class="fa fa-th-list me-1"></i>Grid</button>
+                        <button type="button" class="btn {{ $viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary' }}" wire:click="setViewMode('cards')"><i class="fa fa-th-large me-1"></i>Cards</button>
+                    </div>
+                    <a href="{{ route('front-office.add-reservation') }}" class="btn btn-sm btn-primary"><i class="fa fa-bed"></i> <i class="fa fa-plus small"></i> Add Reservation</a>
+                </div>
             </div>
         </div>
     </div>
@@ -1050,18 +992,10 @@
                                     @error('sidebarPaymentClientReference') <span class="text-danger small">{{ $message }}</span> @enderror
                                 </div>
                             @endif
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="checkbox" id="sidebar_debt_settle" wire:model.live="sidebarDebtSettlement">
-                                <label class="form-check-label small" for="sidebar_debt_settle">Confirming outstanding balance (debt) payment</label>
-                            </div>
-                            @if($sidebarDebtSettlement)
-                                <div class="mb-2">
-                                    <label class="form-label small">Sales / revenue date for reports <span class="text-danger">*</span></label>
-                                    <input type="date" class="form-control form-control-sm" wire:model="sidebarRevenueAttributionDate">
-                                    @error('sidebarRevenueAttributionDate') <span class="text-danger small">{{ $message }}</span> @enderror
-                                    <div class="form-text small">Payment is counted in rooms sales on this date (e.g. last night of stay or checkout).</div>
-                                </div>
-                            @endif
+                            @include('livewire.front-office.partials.payment-purpose-fields', [
+                                'purposeModel' => 'sidebarPaymentPurpose',
+                                'revenueDateModel' => 'sidebarRevenueAttributionDate',
+                            ])
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-outline-secondary btn-sm" wire:click="closeSidebarRecordPayment">Cancel</button>
@@ -1077,32 +1011,74 @@
     @if($showCheckoutModal && $checkoutReservationId)
         @php $checkout = $this->getCheckoutSummary(); @endphp
         <div class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.35); z-index: 1065;">
-            <div class="modal-dialog modal-dialog-centered modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h6 class="modal-title">Check-out — Review receipt & charges</h6>
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+                <div class="modal-content frontoffice-modal">
+                    <div class="modal-header py-2">
+                        <h6 class="modal-title">Check-out</h6>
                         <button type="button" class="btn-close" wire:click="closeCheckoutModal" aria-label="Close"></button>
                     </div>
-                    <div class="modal-body">
+                    <div class="modal-body py-2">
                         @if (session()->has('error'))
                             <div class="alert alert-danger py-2 mb-3">{{ session('error') }}</div>
                         @endif
                         @if($checkout['reservation'])
-                            <p class="fw-semibold mb-2">{{ $checkout['reservation']['guest_name'] }} · {{ $checkout['reservation']['reservation_number'] }} · Room {{ $checkout['reservation']['room_number'] }}</p>
+                            <p class="small fw-semibold mb-2">{{ $checkout['reservation']['guest_name'] }} · {{ $checkout['reservation']['reservation_number'] }} · {{ $checkout['reservation']['room_number'] }}</p>
                         @endif
-                        <h6 class="mb-2">Reservation folio</h6>
+                        @if(!empty($checkout['early_checkout']))
+                            @php $ec = $checkout['early_checkout']; @endphp
+                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                <label class="small text-muted mb-0">Departure</label>
+                                <input type="date"
+                                       class="form-control form-control-sm"
+                                       style="max-width: 11rem"
+                                       wire:model.live="checkoutEffectiveDepartureDate"
+                                       min="{{ $ec['minimum_departure_ymd'] }}"
+                                       max="{{ $ec['booked_departure_ymd'] }}">
+                                @if($ec['is_proration'] ?? false)
+                                    <span class="small text-muted">{{ $ec['stayed_nights'] }}/{{ $ec['booked_nights'] }} nights billed · was {{ $ec['booked_departure_ymd'] }}</span>
+                                @endif
+                            </div>
+                            @if(!empty($ec['clamp_note']))
+                                <p class="small text-primary mb-2">{{ $ec['clamp_note'] }}</p>
+                            @endif
+                        @endif
+
+                        @if(!empty($checkout['stay_invoice']['lines']))
+                            <h6 class="small text-uppercase text-muted mb-1">Accommodation</h6>
+                            @include('livewire.front-office.partials.accommodation-invoice-table', [
+                                'invoice' => $checkout['stay_invoice'],
+                                'footerLabel' => 'Total',
+                                'compact' => true,
+                            ])
+                            @if(!empty($checkout['checkout_invoice_print_url']))
+                                <a href="{{ $checkout['checkout_invoice_print_url'] }}&amp;auto=1" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm mb-2"><i class="fa fa-print me-1"></i>Print</a>
+                            @endif
+                        @endif
+
+                        <h6 class="small text-uppercase text-muted mb-1">Folio</h6>
                         @if($checkout['folio'])
-                            <div class="table-responsive mb-3">
-                                <table class="table table-sm table-bordered">
+                            <div class="table-responsive mb-2">
+                                <table class="table table-sm table-bordered mb-0">
                                     <tbody>
-                                        <tr><td class="text-muted">Total</td><td class="text-end">{{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['total'], 2) }}</td></tr>
-                                        <tr><td class="text-muted">Paid</td><td class="text-end">{{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['paid'], 2) }}</td></tr>
-                                        <tr><td class="text-muted">Balance</td><td class="text-end {{ $checkout['folio']['balance'] > 0 ? 'text-danger fw-bold' : '' }}">{{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['balance'], 2) }}</td></tr>
+                                        @if(!empty($checkout['early_checkout']['is_proration']))
+                                            <tr><td class="text-muted small">Booked total</td><td class="text-end small">{{ $checkout['folio']['currency'] }} {{ number_format((float) $checkout['folio']['booked_total'], 2) }}</td></tr>
+                                        @endif
+                                        <tr><td class="text-muted small">{{ !empty($checkout['early_checkout']['is_proration']) ? 'Adjusted total' : 'Total' }}</td><td class="text-end">{{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['total'], 2) }}</td></tr>
+                                        <tr><td class="text-muted small">Paid</td><td class="text-end small">{{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['paid'], 2) }}</td></tr>
+                                        <tr>
+                                            <td class="text-muted small">Balance</td>
+                                            <td class="text-end {{ $checkout['folio']['balance'] > 0 ? 'text-danger fw-bold' : '' }}">
+                                                {{ $checkout['folio']['currency'] }} {{ number_format($checkout['folio']['balance'], 2) }}
+                                                @if(($checkout['folio']['balance_raw'] ?? 0) < -0.02)
+                                                    <span class="small fw-normal text-muted d-block">Credit {{ $checkout['folio']['currency'] }} {{ number_format(abs((float) $checkout['folio']['balance_raw']), 2) }}</span>
+                                                @endif
+                                            </td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
                         @endif
-                        <h6 class="mb-2">Restaurant / POS invoices linked to this reservation</h6>
+                        <h6 class="small text-uppercase text-muted mb-1">POS / extras</h6>
                         @if(!empty($checkout['invoices']))
                             <div class="table-responsive mb-3">
                                 <table class="table table-sm table-bordered">
@@ -1128,10 +1104,10 @@
                                 </table>
                             </div>
                         @else
-                            <p class="text-muted small mb-3">No restaurant or POS invoices linked to this reservation.</p>
+                            <p class="text-muted small mb-2">None linked.</p>
                         @endif
 
-                        <h6 class="mb-2 mt-3">Payments received (hotel)</h6>
+                        <h6 class="small text-uppercase text-muted mb-1">Payments</h6>
                         @if(!empty($checkout['payments']))
                             <div class="table-responsive mb-0">
                                 <table class="table table-sm table-bordered">
@@ -1166,15 +1142,16 @@
                                 </table>
                             </div>
                         @else
-                            <p class="text-muted small mb-0">No hotel payments recorded yet.</p>
+                            <p class="text-muted small mb-0">None recorded.</p>
+                        @endif
+                        @if(!empty($checkout['payments_snapshot_note']))
+                            <p class="text-muted small mb-1">{{ $checkout['payments_snapshot_note'] }}</p>
                         @endif
                         @if(!$checkout['can_confirm'])
-                            <div class="alert alert-warning py-2 mb-0">
-                                <small>Confirm checkout only when the reservation balance is paid and all linked invoices are paid or assigned (room / hotel covered / credit).</small>
-                            </div>
+                            <div class="alert alert-warning py-1 px-2 mb-0 small">Pay stay balance and settle all POS invoices before confirming.</div>
                         @endif
                     </div>
-                    <div class="modal-footer">
+                    <div class="modal-footer py-2">
                         <button type="button" class="btn btn-outline-secondary btn-sm" wire:click="closeCheckoutModal">Cancel</button>
                         <button type="button" class="btn btn-outline-primary btn-sm" wire:click="$refresh" title="Refresh after settling invoices">Refresh</button>
                         <button type="button"
